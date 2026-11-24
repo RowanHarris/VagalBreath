@@ -1,0 +1,49 @@
+<resources>
+    <string id="AppName">VagalBreath</string>
+
+    <!-- Setup Menu -->
+    <string id="MenuSetupTitle">Breath Setup</string>
+    <string id="MenuProtocol">Protocol</string>
+    <string id="MenuDuration">Duration</string>
+    <string id="MenuStart">Start Session</string>
+
+    <!-- Protocol Picker -->
+    <string id="ProtoMenuTitle">Select Protocol</string>
+    <string id="ProtoCyclicSigh">Cyclic Sigh</string>
+    <string id="ProtoCyclicSighSub">3+1-6s • #1 Acute Stress</string>
+    <string id="ProtoResonance">Resonance 0.1Hz</string>
+    <string id="ProtoResonanceSub">5.5-5.5s • Peak HRV</string>
+    <string id="ProtoVagal46">Vagal 4-6</string>
+    <string id="ProtoVagal46Sub">4-6s • Vagal Brake</string>
+    <string id="Proto478">4-7-8 Relax</string>
+    <string id="Proto478Sub">4-7-8s • Deep Wind-Down</string>
+    <string id="ProtoBox">Box 4-4-4-4</string>
+    <string id="ProtoBoxSub">4-4-4-4s • Calm Focus</string>
+
+    <!-- Duration Picker -->
+    <string id="DurMenuTitle">Session Length</string>
+    <string id="Dur2Min">2 Minutes</string>
+    <string id="Dur2MinSub">Quick nervous system reset</string>
+    <string id="Dur5Min">5 Minutes</string>
+    <string id="Dur5MinSub">Stanford daily protocol</string>
+    <string id="Dur10Min">10 Minutes</string>
+    <string id="Dur10MinSub">Deep vagal HRV training</string>
+
+    <!-- Pause / Completion Menu -->
+    <string id="MenuPausedTitle">Session Paused</string>
+    <string id="MenuCompleteTitle">Session Complete</string>
+    <string id="MenuResume">Resume</string>
+    <string id="MenuSave">Save</string>
+    <string id="MenuDiscard">Discard</string>
+    <string id="ConfirmDiscardPrompt">Discard session?\nAre you sure?</string>
+
+    <!-- Developer FIT Contribution Labels -->
+    <string id="FitProtocolLabel">Breath Protocol</string>
+    <string id="FitProtocolUnits">id</string>
+    <string id="FitHrDropLabel">HR Change</string>
+    <string id="FitHrDropUnits">bpm</string>
+    <string id="FitRmssdLabel">Vagal HRV RMSSD</string>
+    <string id="FitRmssdUnits">ms</string>
+    <string id="FitCyclesLabel">Breath Cycles</string>
+    <string id="FitCyclesUnits">cycles</string>
+</resources>

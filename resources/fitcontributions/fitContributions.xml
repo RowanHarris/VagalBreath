@@ -1,0 +1,32 @@
+<resources>
+    <fitContributions>
+        <fitField
+            id="0"
+            displayInActivitySummary="true"
+            sortOrder="0"
+            precision="0"
+            dataLabel="@Strings.FitProtocolLabel"
+            unitLabel="@Strings.FitProtocolUnits" />
+        <fitField
+            id="1"
+            displayInActivitySummary="true"
+            sortOrder="1"
+            precision="0"
+            dataLabel="@Strings.FitHrDropLabel"
+            unitLabel="@Strings.FitHrDropUnits" />
+        <fitField
+            id="2"
+            displayInActivitySummary="true"
+            sortOrder="2"
+            precision="1"
+            dataLabel="@Strings.FitRmssdLabel"
+            unitLabel="@Strings.FitRmssdUnits" />
+        <fitField
+            id="3"
+            displayInActivitySummary="true"
+            sortOrder="3"
+            precision="0"
+            dataLabel="@Strings.FitCyclesLabel"
+            unitLabel="@Strings.FitCyclesUnits" />
+    </fitContributions>
+</resources>

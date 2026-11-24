@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- Garmin Connect IQ Manifest for VagalBreath (Venu 3 Vagal Breathwork App) -->
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+    <iq:application
+        id="e92a4c71f6084d15a3b7c8e9104d2f61"
+        type="watch-app"
+        name="@Strings.AppName"
+        entry="BreathApp"
+        launcherIcon="@Drawables.LauncherIcon"
+        minApiLevel="5.0.0"
+        version="1.0.0">
+
+        <iq:products>
+            <iq:product id="venu3"/>
+        </iq:products>
+
+        <iq:permissions>
+            <iq:uses-permission id="Fit"/>
+            <iq:uses-permission id="FitContributor"/>
+            <iq:uses-permission id="Sensor"/>
+        </iq:permissions>
+
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>
