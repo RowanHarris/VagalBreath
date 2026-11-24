@@ -5,12 +5,10 @@ import Toybox.WatchUi;
 
 //! Serene, high-contrast Venu 3 (454x454 AMOLED) breathing pacer & live vagal biofeedback UI.
 //!
-//! Screens:
-//!   - READY:    Selected protocol, cadence, duration, and quick Start / Setup hints
-//!   - ACTIVE:   Outer session progress arc, smooth cosine-eased expanding/contracting
-//!               breathing circle (with crisp bright surge on Cyclic Sigh's Top-Off inhale),
-//!               phase instruction + countdown, and live HR (with delta) + RMSSD HRV (ms)
-//!   - COMPLETE: Summary of HR drop, Vagal RMSSD HRV, Stress score, and completed cycles
+//! Full-screen dynamic ring geometry:
+//!   - Fully exhaled (0% fill): shrinks down to a tight 26px inner core circle
+//!   - Fully inhaled (100% fill): expands all the way out to the full bezel ring
+//!     (same radius as the outer session progress ring) for maximum visual range.
 class BreathView extends WatchUi.View {
 
     // Bioluminescent calm palette on true black AMOLED
@@ -24,9 +22,9 @@ class BreathView extends WatchUi.View {
     private static const COLOR_GOOD_DROP as Number = 0x4CE6A0;
     private static const COLOR_PAUSED_RING as Number = 0xFFAA00;
 
-    // Breathing circle radius range on 454x454 display
-    private static const CIRCLE_MIN_RADIUS as Float = 66.0;
-    private static const CIRCLE_MAX_RADIUS as Float = 158.0;
+    // Compact fully-exhaled core radius; full-inhale expands dynamically to outer bezel radius
+    private static const CIRCLE_MIN_RADIUS as Float = 26.0;
+    private static const BEZEL_INSET_PX as Number = 8;
 
     private var _app as BreathApp;
 
@@ -104,7 +102,7 @@ class BreathView extends WatchUi.View {
     }
 
     // -------------------------------------------------------------------------
-    // Ready Screen (Protocol + Duration + Start / Setup)
+    // Ready Screen (Protocol + Live Cadence + Duration + Start / Setup)
     // -------------------------------------------------------------------------
 
     private function drawReadyScreen(
@@ -117,7 +115,6 @@ class BreathView extends WatchUi.View {
     ) as Void {
         var protoId = proto.getProtocolId();
 
-        // Calm concentric halo border
         dc.setColor(COLOR_INHALE, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(5);
         dc.drawCircle(cx, cy, cx - 10);
@@ -145,11 +142,10 @@ class BreathView extends WatchUi.View {
             cx,
             (height * 51) / 100,
             _fontTitle,
-            BreathProtocol.getProtocolCadenceText(protoId) + "  •  " + proto.getDurationMinutes().format("%d") + " MIN",
+            proto.getActiveCadenceText() + "  •  " + proto.getDurationMinutes().format("%d") + " MIN",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        // Live pre-session heart rate
         var hr = _app.getDisplayHeartRate();
         var hrText = (hr != null) ? (hr.format("%d") + " bpm") : "-- bpm";
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
@@ -172,7 +168,7 @@ class BreathView extends WatchUi.View {
     }
 
     // -------------------------------------------------------------------------
-    // Active / Paused Breathing Pacer Screen
+    // Active / Paused Full-Range Breathing Pacer Screen
     // -------------------------------------------------------------------------
 
     private function drawActiveScreen(
@@ -187,42 +183,40 @@ class BreathView extends WatchUi.View {
         var phaseType = proto.getCurrentPhaseType();
         var phaseColor = colorForPhase(phaseType);
 
-        // 1. Outer bezel progress ring (amber when paused; smooth progress arc when active)
-        var outerR = cx - 6;
+        // Full bezel radius serves as both the session progress ring AND 100% full-inhale target
+        var maxRadius = (cx - BEZEL_INSET_PX).toFloat();
+        var outerR = cx - BEZEL_INSET_PX;
+
+        // 1. Subtle outer bezel track + session progress arc
         if (isPaused) {
             dc.setColor(COLOR_PAUSED_RING, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(8);
             dc.drawCircle(cx, cy, outerR);
         } else {
             dc.setColor(COLOR_PROGRESS_BG, Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(5);
+            dc.setPenWidth(4);
             dc.drawCircle(cx, cy, outerR);
 
             var progress = proto.getSessionProgressFraction();
-            drawProgressArc(dc, cx, cy, outerR, progress, phaseColor, 5);
+            drawProgressArc(dc, cx, cy, outerR, progress, COLOR_TEXT_MUTED, 4);
         }
 
-        // 2. Smooth expanding/contracting breathing circle
+        // 2. Full-range expanding/contracting breathing circle (26px core -> full bezel ring)
         var fill = proto.getLungFillFraction();
-        var radius = Math.round(CIRCLE_MIN_RADIUS + ((CIRCLE_MAX_RADIUS - CIRCLE_MIN_RADIUS) * fill)).toNumber();
+        var radius = Math.round(CIRCLE_MIN_RADIUS + ((maxRadius - CIRCLE_MIN_RADIUS) * fill)).toNumber();
 
-        // Soft background lung-capacity reference guide (subtle outer max ring)
-        dc.setColor(COLOR_HALO_DIM, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(2);
-        dc.drawCircle(cx, cy, CIRCLE_MAX_RADIUS.toNumber());
+        // Subtle inner echo ring for serene depth when expanded
+        if (radius > 44) {
+            dc.setColor(COLOR_HALO_DIM, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(5);
+            dc.drawCircle(cx, cy, radius - 14);
+        }
 
-        // Inner breathing halo (bright crisp thicker stroke during Cyclic Sigh's TOP-OFF!)
-        var ringWidth = (phaseType == BreathProtocol.PHASE_INHALE_TOP_OFF) ? 14 : 9;
+        // Primary breathing ring (thicker crisp surge during Cyclic Sigh's TOP-OFF inhale)
+        var ringWidth = (phaseType == BreathProtocol.PHASE_INHALE_TOP_OFF) ? 14 : 10;
         dc.setColor(phaseColor, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(ringWidth);
         dc.drawCircle(cx, cy, radius);
-
-        // Subtle inner secondary echo ring for visual depth
-        if (radius > 22) {
-            dc.setColor(COLOR_HALO_DIM, Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(4);
-            dc.drawCircle(cx, cy, radius - 14);
-        }
 
         // 3. Top header: protocol name + session time remaining
         var topText = BreathProtocol.getProtocolShortName(proto.getProtocolId()) +
@@ -230,17 +224,17 @@ class BreathView extends WatchUi.View {
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 11) / 100,
+            (height * 13) / 100,
             _fontSmall,
             topText,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        // 4. Center phase prompt + phase countdown
+        // 4. Center phase prompt + phase countdown (positioned cleanly around the 26px empty core)
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 43) / 100,
+            (height * 37) / 100,
             _fontPhase,
             isPaused ? "PAUSED" : proto.getCurrentPhaseLabel(),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -252,7 +246,7 @@ class BreathView extends WatchUi.View {
         }
         dc.drawText(
             cx,
-            (height * 57) / 100,
+            (height * 64) / 100,
             _fontCount,
             phaseSec.format("%d"),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -267,7 +261,7 @@ class BreathView extends WatchUi.View {
         dc.setColor(hrColor, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 81) / 100,
+            (height * 80) / 100,
             _fontBio,
             hrLine,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -277,7 +271,7 @@ class BreathView extends WatchUi.View {
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 89) / 100,
+            (height * 88) / 100,
             _fontSmall,
             hrvLine,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -321,7 +315,6 @@ class BreathView extends WatchUi.View {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        // Start -> End HR and Delta
         var startHr = tracker.getStartHeartRateRounded();
         var endHr = tracker.getCurrentHeartRate();
         var deltaHr = tracker.getHeartRateDelta();
@@ -342,7 +335,6 @@ class BreathView extends WatchUi.View {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        // Session Vagal RMSSD HRV
         var rmssd = tracker.getSessionRmssdMs();
         var rmssdText = (rmssd != null)
             ? ("HRV " + Math.round(rmssd).toNumber().format("%d") + " ms")
@@ -356,7 +348,6 @@ class BreathView extends WatchUi.View {
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        // Optional Garmin Stress summary if available
         var endStress = tracker.getCurrentStress();
         if (endStress != null) {
             var startStress = tracker.getStartStress();

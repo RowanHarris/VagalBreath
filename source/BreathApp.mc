@@ -63,6 +63,7 @@ class BreathApp extends Application.AppBase {
         }
 
         _protocol = new BreathProtocol(savedProto, savedDur);
+        loadSavedPhaseTimings(savedProto);
         _tracker = new VagalMetricsTracker();
         _session = null;
 
@@ -191,8 +192,40 @@ class BreathApp extends Application.AppBase {
 
     public function selectProtocol(protocolId as Number) as Void {
         _protocol.setProtocol(protocolId);
+        loadSavedPhaseTimings(_protocol.getProtocolId());
         Storage.setValue(STORAGE_KEY_PROTOCOL, _protocol.getProtocolId());
         WatchUi.requestUpdate();
+    }
+
+    public function setCustomPhaseDuration(phaseIndex as Number, durationMs as Number) as Void {
+        if (_protocol.setPhaseDurationMs(phaseIndex, durationMs)) {
+            Storage.setValue(phaseStorageKey(_protocol.getProtocolId(), phaseIndex), durationMs);
+            WatchUi.requestUpdate();
+        }
+    }
+
+    public function resetCurrentProtocolTimings() as Void {
+        var protoId = _protocol.getProtocolId();
+        var count = _protocol.getPhaseCount();
+        for (var i = 0; i < count; i++) {
+            Storage.deleteValue(phaseStorageKey(protoId, i));
+        }
+        _protocol.resetCurrentProtocolDefaults();
+        WatchUi.requestUpdate();
+    }
+
+    private function phaseStorageKey(protocolId as Number, phaseIndex as Number) as String {
+        return "vb_p" + protocolId.format("%d") + "_d" + phaseIndex.format("%d");
+    }
+
+    private function loadSavedPhaseTimings(protocolId as Number) as Void {
+        var count = _protocol.getPhaseCount();
+        for (var i = 0; i < count; i++) {
+            var raw = Storage.getValue(phaseStorageKey(protocolId, i));
+            if (raw instanceof Number) {
+                _protocol.setPhaseDurationMs(i, raw);
+            }
+        }
     }
 
     public function selectDurationMinutes(minutes as Number) as Void {

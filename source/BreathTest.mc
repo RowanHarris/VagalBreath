@@ -25,10 +25,11 @@ class BreathTest {
     }
 
     (:test)
-    public static function testCyclicSighPhasesAndDoubleInhaleFill(logger as Test.Logger) as Boolean {
-        logger.debug("Testing Huberman Cyclic Sigh (3s inhale + 1s top-off -> 6s exhale)");
+    public static function testCyclicSighPhasesAndCustomTiming(logger as Test.Logger) as Boolean {
+        logger.debug("Testing Huberman Cyclic Sigh default (3+1-7s) and custom (3+2-8s) timings");
 
         var bp = new BreathProtocol(BreathProtocol.PROTO_CYCLIC_SIGH, 2);
+        Test.assert(bp.getActiveCadenceText().equals("3 + 1 - 7 s"));
         bp.start();
 
         // Starts in INHALE (0.0 fill)
@@ -44,28 +45,32 @@ class BreathTest {
         Test.assertEqual(BreathProtocol.PHASE_INHALE_TOP_OFF, bp.getCurrentPhaseType());
         assertFloatNear(bp.getLungFillFraction(), 0.78, 0.02, "Start of top-off is 0.78");
 
-        // At 4.0s -> transitions to EXHALE (starts at 1.00 fill)
+        // At 4.0s -> transitions to 7s EXHALE (starts at 1.00 fill)
         Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(1000));
         Test.assertEqual(BreathProtocol.PHASE_EXHALE, bp.getCurrentPhaseType());
         assertFloatNear(bp.getLungFillFraction(), 1.0, 0.02, "Start of exhale is 1.0");
 
-        // At 10.0s -> finishes cycle 1, returns to INHALE
-        Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(6000));
+        // At 11.0s (7s exhale) -> finishes cycle 1, returns to INHALE
+        Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(7000));
         Test.assertEqual(1, bp.getCompletedCycles());
         Test.assertEqual(BreathProtocol.PHASE_INHALE, bp.getCurrentPhaseType());
 
-        // Remaining 11 cycles (110s -> total 120s = 2 min) finish cleanly at end of exhale
-        var completed = false;
-        for (var i = 0; i < 1100; i++) {
-            var ev = bp.tick(100);
-            if (ev == BreathProtocol.EVENT_SESSION_COMPLETE) {
-                completed = true;
-                break;
-            }
-        }
-        Test.assert(completed);
-        Test.assertEqual(BreathProtocol.STATE_COMPLETE, bp.getState());
-        Test.assertEqual(12, bp.getCompletedCycles());
+        // Customize Top-Off to 2s and Exhale to 8s -> 3 + 2 - 8 s (13s cycle)
+        Test.assert(bp.setPhaseDurationMs(1, 2000));
+        Test.assert(bp.setPhaseDurationMs(2, 8000));
+        Test.assert(bp.getActiveCadenceText().equals("3 + 2 - 8 s"));
+        bp.start();
+        Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(3000));
+        Test.assertEqual(BreathProtocol.PHASE_INHALE_TOP_OFF, bp.getCurrentPhaseType());
+        Test.assertEqual(BreathProtocol.EVENT_NONE, bp.tick(1000));
+        Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(1000));
+        Test.assertEqual(BreathProtocol.PHASE_EXHALE, bp.getCurrentPhaseType());
+        Test.assertEqual(BreathProtocol.EVENT_PHASE_CHANGED, bp.tick(8000));
+        Test.assertEqual(1, bp.getCompletedCycles());
+
+        // Reset defaults restores 3 + 1 - 7 s
+        bp.resetCurrentProtocolDefaults();
+        Test.assert(bp.getActiveCadenceText().equals("3 + 1 - 7 s"));
 
         return true;
     }

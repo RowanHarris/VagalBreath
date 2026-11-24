@@ -4,8 +4,8 @@ A standalone, scientifically backed vagal-tone & stress-reduction breathwork Wat
 
 ## Included Protocols (Peer-Reviewed)
 
-1. **Cyclic Sigh (`3 + 1 - 6 s`)** — *Balban, Huberman, Spiegel et al. (Cell Reports Medicine, 2023)*
-   - 3s deep nasal inhale + 1s sharp nasal top-off sip (with a distinct sharp double-tap haptic cue) → 6s slow relaxed mouth exhale. Ranked #1 in the Stanford Medicine RCT for acute stress relief, mood lift, and resting respiration drop.
+1. **Cyclic Sigh (`3 + 1 - 7 s`)** — *Balban, Huberman, Spiegel et al. (Cell Reports Medicine, 2023)*
+   - 3s deep nasal inhale + 1s sharp nasal top-off sip (with a distinct sharp double-tap haptic cue) → 7s slow relaxed mouth exhale. Ranked #1 in the Stanford Medicine RCT for acute stress relief, mood lift, and resting respiration drop. Every stage is customizable directly on the watch (e.g., `3 + 2 - 8 s`).
 2. **Resonance 0.1Hz (`5.5 - 5.5 s`)** — *Laborde et al. (2022, 223-study meta-analysis); Lehrer & Gevirtz*
    - Synchronizes breathing with the baroreflex loop (~5.5 breaths/min) to maximize vagal HRV (`RMSSD`).
 3. **Vagal 4-6 (`4 - 6 s`)** — *Van Diest et al. (2014); Magnon et al. (Scientific Reports, 2021)*

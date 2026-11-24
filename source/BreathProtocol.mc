@@ -3,16 +3,17 @@ import Toybox.Math;
 
 //! Pure, unit-testable breathing protocol catalog and pacing state machine.
 //!
-//! Includes the top 5 peer-reviewed vagal-tone / stress-reduction protocols:
-//!   1. Cyclic Sighing (3s inhale + 1s sharp nasal top-off -> 6s slow exhale)
+//! Includes the top 5 peer-reviewed vagal-tone / stress-reduction protocols,
+//! with full per-stage duration customization (stored in milliseconds):
+//!   1. Cyclic Sighing (default: 3s inhale + 1s sharp nasal top-off -> 7s slow exhale)
 //!      - Balban, Huberman, Spiegel et al. (Cell Reports Medicine, 2023)
-//!   2. Resonance 0.1Hz (5.5s inhale -> 5.5s exhale)
+//!   2. Resonance 0.1Hz (default: 5.5s inhale -> 5.5s exhale)
 //!      - Laborde et al. (2022) 223-study meta-analysis; Lehrer & Gevirtz
-//!   3. Vagal 4-6 (4s inhale -> 6s exhale)
+//!   3. Vagal 4-6 (default: 4s inhale -> 6s exhale)
 //!      - Van Diest et al. (2014); Magnon et al. (Scientific Reports, 2021)
-//!   4. 4-7-8 Relax (4s inhale -> 7s hold -> 8s exhale)
+//!   4. 4-7-8 Relax (default: 4s inhale -> 7s hold -> 8s exhale)
 //!      - Vierra et al. (Physiological Reports, 2022)
-//!   5. Box 4-4-4-4 (4s inhale -> 4s hold -> 4s exhale -> 4s hold)
+//!   5. Box 4-4-4-4 (default: 4s inhale -> 4s hold -> 4s exhale -> 4s hold)
 //!      - Balban et al. (Cell Reports Medicine, 2023, #2 ranked)
 class BreathProtocol {
 
@@ -54,12 +55,15 @@ class BreathProtocol {
     public static const EVENT_SESSION_COMPLETE as Number = 2;
 
     // -------------------------------------------------------------------------
-    // Duration Presets (minutes)
+    // Duration Presets (minutes) & Bounds (ms)
     // -------------------------------------------------------------------------
 
     public static const DURATION_2_MIN as Number = 2;
     public static const DURATION_5_MIN as Number = 5;
     public static const DURATION_10_MIN as Number = 10;
+
+    public static const MIN_PHASE_DURATION_MS as Number = 500;
+    public static const MAX_PHASE_DURATION_MS as Number = 15000;
 
     // -------------------------------------------------------------------------
     // Instance State
@@ -100,7 +104,7 @@ class BreathProtocol {
         setDurationMinutes(durationMinutes);
     }
 
-    //! Configure the active breathing protocol (resets session to READY).
+    //! Configure the active breathing protocol with its clinical default timings.
     public function setProtocol(protocolId as Number) as Void {
         if (protocolId < PROTO_CYCLIC_SIGH || protocolId > PROTO_BOX) {
             protocolId = PROTO_CYCLIC_SIGH;
@@ -109,9 +113,9 @@ class BreathProtocol {
 
         if (protocolId == PROTO_CYCLIC_SIGH) {
             // Huberman / Stanford Cell Reports Medicine (2023):
-            // 3s deep nasal inhale (0 -> 78%) + 1s sharp nasal top-off (78% -> 100%) + 6s slow exhale (100% -> 0%)
+            // 3s deep nasal inhale (0 -> 78%) + 1s sharp nasal top-off (78% -> 100%) + 7s slow exhale (100% -> 0%)
             _phaseTypes = [PHASE_INHALE, PHASE_INHALE_TOP_OFF, PHASE_EXHALE] as Array<Number>;
-            _phaseDurationsMs = [3000, 1000, 6000] as Array<Number>;
+            _phaseDurationsMs = [3000, 1000, 7000] as Array<Number>;
             _phaseStartFill = [0.0, 0.78, 1.0] as Array<Float>;
             _phaseEndFill = [0.78, 1.0, 0.0] as Array<Float>;
         } else if (protocolId == PROTO_RESONANCE) {
@@ -141,6 +145,23 @@ class BreathProtocol {
         }
 
         resetSession();
+    }
+
+    //! Customize the duration (ms) of a single stage in the current protocol.
+    public function setPhaseDurationMs(phaseIndex as Number, durationMs as Number) as Boolean {
+        if (phaseIndex < 0 || phaseIndex >= _phaseDurationsMs.size()) {
+            return false;
+        }
+        if (durationMs < MIN_PHASE_DURATION_MS || durationMs > MAX_PHASE_DURATION_MS) {
+            return false;
+        }
+        _phaseDurationsMs[phaseIndex] = durationMs;
+        return true;
+    }
+
+    //! Reset the current protocol's stage durations back to its clinical defaults.
+    public function resetCurrentProtocolDefaults() as Void {
+        setProtocol(_protocolId);
     }
 
     //! Configure target session length in minutes (2, 5, or 10).
@@ -273,6 +294,63 @@ class BreathProtocol {
         return "EXHALE";
     }
 
+    //! Descriptive menu label for each phase in the per-stage timing editor.
+    public static function getPhaseMenuTitle(phaseType as Number) as String {
+        if (phaseType == PHASE_INHALE) {
+            return "Inhale";
+        }
+        if (phaseType == PHASE_INHALE_TOP_OFF) {
+            return "Top-Off Breath";
+        }
+        if (phaseType == PHASE_HOLD_IN) {
+            return "Hold (Full)";
+        }
+        if (phaseType == PHASE_HOLD_OUT) {
+            return "Hold (Empty)";
+        }
+        return "Exhale";
+    }
+
+    //! Formats a duration in ms cleanly as "7" or "5.5".
+    public static function formatDurationSec(ms as Number) as String {
+        var whole = ms / 1000;
+        var rem = ms % 1000;
+        if (rem == 0) {
+            return whole.format("%d");
+        }
+        var tenths = rem / 100;
+        return whole.format("%d") + "." + tenths.format("%d");
+    }
+
+    //! Returns live formatted cadence reflecting any custom stage timings (e.g. "3 + 2 - 8 s").
+    public function getActiveCadenceText() as String {
+        var count = _phaseDurationsMs.size();
+        if (count == 0) {
+            return "";
+        }
+        var text = BreathProtocol.formatDurationSec(_phaseDurationsMs[0]);
+        for (var i = 1; i < count; i++) {
+            var sep = (_phaseTypes[i] == PHASE_INHALE_TOP_OFF) ? " + " : " - ";
+            text = text + sep + BreathProtocol.formatDurationSec(_phaseDurationsMs[i]);
+        }
+        return text + " s";
+    }
+
+    //! Returns selectable duration options (ms) tailored to a given phase type.
+    public static function getOptionsMsForPhase(phaseType as Number) as Array<Number> {
+        if (phaseType == PHASE_INHALE_TOP_OFF) {
+            return [500, 1000, 1500, 2000, 2500, 3000] as Array<Number>;
+        }
+        if (phaseType == PHASE_EXHALE) {
+            return [4000, 5000, 5500, 6000, 7000, 8000, 9000, 10000, 12000] as Array<Number>;
+        }
+        if (phaseType == PHASE_HOLD_IN || phaseType == PHASE_HOLD_OUT) {
+            return [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 10000] as Array<Number>;
+        }
+        // PHASE_INHALE
+        return [1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 7000, 8000] as Array<Number>;
+    }
+
     //! Short display name for each protocol.
     public static function getProtocolShortName(protocolId as Number) as String {
         if (protocolId == PROTO_CYCLIC_SIGH) {
@@ -290,23 +368,6 @@ class BreathProtocol {
         return "BOX 4-4-4-4";
     }
 
-    //! Concise cadence caption displayed on the Ready screen.
-    public static function getProtocolCadenceText(protocolId as Number) as String {
-        if (protocolId == PROTO_CYCLIC_SIGH) {
-            return "3 + 1 - 6 s";
-        }
-        if (protocolId == PROTO_RESONANCE) {
-            return "5.5 - 5.5 s";
-        }
-        if (protocolId == PROTO_VAGAL_4_6) {
-            return "4 - 6 s";
-        }
-        if (protocolId == PROTO_4_7_8) {
-            return "4 - 7 - 8 s";
-        }
-        return "4 - 4 - 4 - 4 s";
-    }
-
     // -------------------------------------------------------------------------
     // Public Getters
     // -------------------------------------------------------------------------
@@ -321,6 +382,18 @@ class BreathProtocol {
 
     public function getState() as Number {
         return _state;
+    }
+
+    public function getPhaseCount() as Number {
+        return _phaseTypes.size();
+    }
+
+    public function getPhaseTypeAt(index as Number) as Number {
+        return _phaseTypes[index];
+    }
+
+    public function getPhaseDurationMsAt(index as Number) as Number {
+        return _phaseDurationsMs[index];
     }
 
     public function getCurrentPhaseType() as Number {

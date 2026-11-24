@@ -6,7 +6,7 @@ import Toybox.WatchUi;
 //! Controls:
 //!   - Ready Screen:
 //!       * Top-Right (KEY_ENTER) or Tap: Start session immediately
-//!       * Swipe Up/Down or Menu: Open Protocol & Duration Setup Menu2
+//!       * Swipe Up/Down or Menu: Open Setup (Protocol, Customize Timing, Duration, Start)
 //!       * Bottom-Right (KEY_ESC): Exit app
 //!   - Active Session:
 //!       * Touch taps/swipes ignored (safe for eyes-closed practice)
@@ -37,7 +37,6 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
     }
 
     public function onTap(clickEvent as WatchUi.ClickEvent) as Boolean {
-        // Swallow accidental touch taps while eyes are closed during an active session
         return true;
     }
 
@@ -66,7 +65,7 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
     public function onBack() as Boolean {
         var state = _app.getProtocol().getState();
         if (state == BreathProtocol.STATE_READY) {
-            return false; // Exit cleanly before starting
+            return false;
         }
         if (state == BreathProtocol.STATE_ACTIVE) {
             _app.pauseSession();
@@ -116,18 +115,36 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
         var proto = _app.getProtocol();
         var title = WatchUi.loadResource(Rez.Strings.MenuSetupTitle) as String;
         var protoLabel = WatchUi.loadResource(Rez.Strings.MenuProtocol) as String;
+        var timingLabel = WatchUi.loadResource(Rez.Strings.MenuCustomizeTiming) as String;
         var durLabel = WatchUi.loadResource(Rez.Strings.MenuDuration) as String;
         var startLabel = WatchUi.loadResource(Rez.Strings.MenuStart) as String;
 
-        var protoSub = BreathProtocol.getProtocolShortName(proto.getProtocolId());
-        var durSub = proto.getDurationMinutes().format("%d") + " min";
+        var protoItem = new WatchUi.MenuItem(
+            protoLabel,
+            BreathProtocol.getProtocolShortName(proto.getProtocolId()),
+            :protocol,
+            null
+        );
+        var timingItem = new WatchUi.MenuItem(
+            timingLabel,
+            proto.getActiveCadenceText(),
+            :timing,
+            null
+        );
+        var durItem = new WatchUi.MenuItem(
+            durLabel,
+            proto.getDurationMinutes().format("%d") + " min",
+            :duration,
+            null
+        );
 
         var menu = new WatchUi.Menu2({ :title => title });
-        menu.addItem(new WatchUi.MenuItem(protoLabel, protoSub, :protocol, null));
-        menu.addItem(new WatchUi.MenuItem(durLabel, durSub, :duration, null));
+        menu.addItem(protoItem);
+        menu.addItem(timingItem);
+        menu.addItem(durItem);
         menu.addItem(new WatchUi.MenuItem(startLabel, null, :start, null));
 
-        WatchUi.pushView(menu, new BreathSetupMenuDelegate(_app), WatchUi.SLIDE_UP);
+        WatchUi.pushView(menu, new BreathSetupMenuDelegate(_app, protoItem, timingItem), WatchUi.SLIDE_UP);
     }
 
     private function pushPausedMenu() as Void {
@@ -157,20 +174,30 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
     }
 }
 
-//! Setup menu delegate routing to Protocol Picker, Duration Picker, or immediate Start.
+//! Setup menu delegate routing to Protocol Picker, Per-Stage Timing Editor, Duration Picker, or Start.
 class BreathSetupMenuDelegate extends WatchUi.Menu2InputDelegate {
 
     private var _app as BreathApp;
+    private var _protoItem as WatchUi.MenuItem;
+    private var _timingItem as WatchUi.MenuItem;
 
-    public function initialize(app as BreathApp) {
+    public function initialize(
+        app as BreathApp,
+        protoItem as WatchUi.MenuItem,
+        timingItem as WatchUi.MenuItem
+    ) {
         Menu2InputDelegate.initialize();
         _app = app;
+        _protoItem = protoItem;
+        _timingItem = timingItem;
     }
 
     public function onSelect(item as WatchUi.MenuItem) as Void {
         var id = item.getId();
         if (id == :protocol) {
-            pushProtocolPicker(item);
+            pushProtocolPicker();
+        } else if (id == :timing) {
+            pushStageTimingMenu();
         } else if (id == :duration) {
             pushDurationPicker(item);
         } else if (id == :start) {
@@ -183,7 +210,7 @@ class BreathSetupMenuDelegate extends WatchUi.Menu2InputDelegate {
         WatchUi.popView(WatchUi.SLIDE_DOWN);
     }
 
-    private function pushProtocolPicker(parentItem as WatchUi.MenuItem) as Void {
+    private function pushProtocolPicker() as Void {
         var title = WatchUi.loadResource(Rez.Strings.ProtoMenuTitle) as String;
         var menu = new WatchUi.Menu2({ :title => title });
 
@@ -218,10 +245,45 @@ class BreathSetupMenuDelegate extends WatchUi.Menu2InputDelegate {
             null
         ));
 
-        WatchUi.pushView(menu, new BreathProtocolPickerDelegate(_app, parentItem), WatchUi.SLIDE_LEFT);
+        WatchUi.pushView(
+            menu,
+            new BreathProtocolPickerDelegate(_app, _protoItem, _timingItem),
+            WatchUi.SLIDE_LEFT
+        );
     }
 
-    private function pushDurationPicker(parentItem as WatchUi.MenuItem) as Void {
+    private function pushStageTimingMenu() as Void {
+        var proto = _app.getProtocol();
+        var title = WatchUi.loadResource(Rez.Strings.TimingMenuTitle) as String;
+        var menu = new WatchUi.Menu2({ :title => title });
+
+        var count = proto.getPhaseCount();
+        for (var i = 0; i < count; i++) {
+            var pType = proto.getPhaseTypeAt(i);
+            var pMs = proto.getPhaseDurationMsAt(i);
+            menu.addItem(new WatchUi.MenuItem(
+                BreathProtocol.getPhaseMenuTitle(pType),
+                BreathProtocol.formatDurationSec(pMs) + " s",
+                i,
+                null
+            ));
+        }
+
+        menu.addItem(new WatchUi.MenuItem(
+            WatchUi.loadResource(Rez.Strings.TimingResetDefaults) as String,
+            WatchUi.loadResource(Rez.Strings.TimingResetDefaultsSub) as String,
+            :reset_defaults,
+            null
+        ));
+
+        WatchUi.pushView(
+            menu,
+            new BreathStageTimingListDelegate(_app, _timingItem),
+            WatchUi.SLIDE_LEFT
+        );
+    }
+
+    private function pushDurationPicker(durItem as WatchUi.MenuItem) as Void {
         var title = WatchUi.loadResource(Rez.Strings.DurMenuTitle) as String;
         var menu = new WatchUi.Menu2({ :title => title });
 
@@ -244,26 +306,120 @@ class BreathSetupMenuDelegate extends WatchUi.Menu2InputDelegate {
             null
         ));
 
-        WatchUi.pushView(menu, new BreathDurationPickerDelegate(_app, parentItem), WatchUi.SLIDE_LEFT);
+        WatchUi.pushView(menu, new BreathDurationPickerDelegate(_app, durItem), WatchUi.SLIDE_LEFT);
     }
 }
 
 class BreathProtocolPickerDelegate extends WatchUi.Menu2InputDelegate {
 
     private var _app as BreathApp;
-    private var _parentItem as WatchUi.MenuItem;
+    private var _protoItem as WatchUi.MenuItem;
+    private var _timingItem as WatchUi.MenuItem;
 
-    public function initialize(app as BreathApp, parentItem as WatchUi.MenuItem) {
+    public function initialize(
+        app as BreathApp,
+        protoItem as WatchUi.MenuItem,
+        timingItem as WatchUi.MenuItem
+    ) {
         Menu2InputDelegate.initialize();
         _app = app;
-        _parentItem = parentItem;
+        _protoItem = protoItem;
+        _timingItem = timingItem;
     }
 
     public function onSelect(item as WatchUi.MenuItem) as Void {
         var id = item.getId();
         if (id instanceof Number) {
             _app.selectProtocol(id);
-            _parentItem.setSubLabel(BreathProtocol.getProtocolShortName(id));
+            _protoItem.setSubLabel(BreathProtocol.getProtocolShortName(id));
+            _timingItem.setSubLabel(_app.getProtocol().getActiveCadenceText());
+        }
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+    }
+
+    public function onBack() as Void {
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+    }
+}
+
+//! Lists every stage of the active protocol (e.g. Inhale / Top-Off / Exhale) for individual customization.
+class BreathStageTimingListDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _app as BreathApp;
+    private var _setupTimingItem as WatchUi.MenuItem;
+
+    public function initialize(app as BreathApp, setupTimingItem as WatchUi.MenuItem) {
+        Menu2InputDelegate.initialize();
+        _app = app;
+        _setupTimingItem = setupTimingItem;
+    }
+
+    public function onSelect(item as WatchUi.MenuItem) as Void {
+        var id = item.getId();
+        if (id == :reset_defaults) {
+            _app.resetCurrentProtocolTimings();
+            _setupTimingItem.setSubLabel(_app.getProtocol().getActiveCadenceText());
+            WatchUi.popView(WatchUi.SLIDE_RIGHT);
+            return;
+        }
+
+        if (id instanceof Number) {
+            var phaseIndex = id;
+            var proto = _app.getProtocol();
+            var pType = proto.getPhaseTypeAt(phaseIndex);
+            var options = BreathProtocol.getOptionsMsForPhase(pType);
+
+            var picker = new WatchUi.Menu2({ :title => BreathProtocol.getPhaseMenuTitle(pType) });
+            for (var i = 0; i < options.size(); i++) {
+                var optMs = options[i];
+                picker.addItem(new WatchUi.MenuItem(
+                    BreathProtocol.formatDurationSec(optMs) + " seconds",
+                    null,
+                    optMs,
+                    null
+                ));
+            }
+
+            WatchUi.pushView(
+                picker,
+                new BreathPhaseSecondsPickerDelegate(_app, phaseIndex, item, _setupTimingItem),
+                WatchUi.SLIDE_LEFT
+            );
+        }
+    }
+
+    public function onBack() as Void {
+        WatchUi.popView(WatchUi.SLIDE_RIGHT);
+    }
+}
+
+//! Picks the exact duration (ms) for one breath stage and saves it persistently.
+class BreathPhaseSecondsPickerDelegate extends WatchUi.Menu2InputDelegate {
+
+    private var _app as BreathApp;
+    private var _phaseIndex as Number;
+    private var _stageRowItem as WatchUi.MenuItem;
+    private var _setupTimingItem as WatchUi.MenuItem;
+
+    public function initialize(
+        app as BreathApp,
+        phaseIndex as Number,
+        stageRowItem as WatchUi.MenuItem,
+        setupTimingItem as WatchUi.MenuItem
+    ) {
+        Menu2InputDelegate.initialize();
+        _app = app;
+        _phaseIndex = phaseIndex;
+        _stageRowItem = stageRowItem;
+        _setupTimingItem = setupTimingItem;
+    }
+
+    public function onSelect(item as WatchUi.MenuItem) as Void {
+        var id = item.getId();
+        if (id instanceof Number) {
+            _app.setCustomPhaseDuration(_phaseIndex, id);
+            _stageRowItem.setSubLabel(BreathProtocol.formatDurationSec(id) + " s");
+            _setupTimingItem.setSubLabel(_app.getProtocol().getActiveCadenceText());
         }
         WatchUi.popView(WatchUi.SLIDE_RIGHT);
     }
