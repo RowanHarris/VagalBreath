@@ -1,15 +1,9 @@
 import Toybox.Lang;
 import Toybox.Math;
 
-//! Real-time autonomic & vagal biofeedback tracker with full-session time-series
-//! history for post-session Heart Rate, Autonomic Stress (0-100), and RMSSD HRV graphs.
-//!
-//! Computes:
-//!   - Baseline Start HR (averaged over initial 5 valid samples), Min/Avg/Max HR, and live HR delta
-//!   - Rolling & Session-Mean RMSSD HRV (ms) from beat-to-beat R-R intervals
-//!     (Sensor.HeartRateData.heartBeatIntervals) with Malik physiological artifact filtering
-//!   - Continuous HRV-derived Autonomic Stress Index (0-100) via ln(RMSSD) mapping
-//!   - Downsampled/capped time-series buffers (every 2s, up to 320 points = >10 min)
+//! Real-time autonomic & vagal biofeedback tracker with per-stage Lab Mode
+//! breakdowns (Pre-Baseline vs. Active Breathing vs. Post-Recovery) and full-session
+//! time-series buffers + lossless beat-to-beat R-R capture for FIT export.
 class VagalMetricsTracker {
 
     // Physiological R-R interval bounds (ms): 300ms (200 bpm) .. 2000ms (30 bpm)
@@ -24,11 +18,12 @@ class VagalMetricsTracker {
     public static const ROLLING_DIFF_WINDOW as Number = 30;
     public static const MIN_DIFFS_FOR_RMSSD as Number = 5;
 
-    // Max time-series points stored (1 point every 2s -> 320 pts covers > 10.6 min)
-    public static const MAX_HISTORY_POINTS as Number = 320;
+    // Max time-series points stored (1 point every 2s -> 540 pts = 18 full minutes)
+    public static const MAX_HISTORY_POINTS as Number = 540;
 
-    // Baseline Start HR averaging sample count
     private static const BASELINE_HR_SAMPLES as Number = 5;
+
+    private var _activeStage as Number; // 1=Baseline, 2=Breathing, 3=Recovery
 
     private var _startHrSum as Number;
     private var _startHrCount as Number;
@@ -39,10 +34,20 @@ class VagalMetricsTracker {
     private var _hrSum as Number;
     private var _hrCount as Number;
 
+    // Per-stage accumulators indexed by (stage - 1): 0=Baseline, 1=Breathing, 2=Recovery
+    private var _stageHrSum as Array<Number>;
+    private var _stageHrCount as Array<Number>;
+    private var _stageSqDiffSum as Array<Float>;
+    private var _stageSqDiffCount as Array<Number>;
+
     private var _lastValidRrMs as Number?;
     private var _rollingSqDiffs as Array<Float>;
     private var _sessionSqDiffSum as Float;
     private var _sessionSqDiffCount as Number;
+
+    // Most recent 1-second batch of raw R-R intervals (ms) for FIT record export
+    private var _lastBatchRr1 as Number;
+    private var _lastBatchRr2 as Number;
 
     private var _startStress as Number?;
     private var _currentStress as Number?;
@@ -53,8 +58,10 @@ class VagalMetricsTracker {
     private var _hrHistory as Array<Number>;
     private var _stressHistory as Array<Number>;
     private var _rmssdHistory as Array<Number>;
+    private var _stageHistory as Array<Number>;
 
     public function initialize() {
+        _activeStage = BreathProtocol.STAGE_BASELINE;
         _startHrSum = 0;
         _startHrCount = 0;
         _startHrAvg = null;
@@ -64,10 +71,18 @@ class VagalMetricsTracker {
         _hrSum = 0;
         _hrCount = 0;
 
+        _stageHrSum = [0, 0, 0] as Array<Number>;
+        _stageHrCount = [0, 0, 0] as Array<Number>;
+        _stageSqDiffSum = [0.0, 0.0, 0.0] as Array<Float>;
+        _stageSqDiffCount = [0, 0, 0] as Array<Number>;
+
         _lastValidRrMs = null;
         _rollingSqDiffs = [] as Array<Float>;
         _sessionSqDiffSum = 0.0;
         _sessionSqDiffCount = 0;
+
+        _lastBatchRr1 = 0;
+        _lastBatchRr2 = 0;
 
         _startStress = null;
         _currentStress = null;
@@ -77,9 +92,11 @@ class VagalMetricsTracker {
         _hrHistory = [] as Array<Number>;
         _stressHistory = [] as Array<Number>;
         _rmssdHistory = [] as Array<Number>;
+        _stageHistory = [] as Array<Number>;
     }
 
-    public function reset() as Void {
+    public function reset(initialStage as Number) as Void {
+        _activeStage = initialStage;
         _startHrSum = 0;
         _startHrCount = 0;
         _startHrAvg = null;
@@ -89,10 +106,18 @@ class VagalMetricsTracker {
         _hrSum = 0;
         _hrCount = 0;
 
+        _stageHrSum = [0, 0, 0] as Array<Number>;
+        _stageHrCount = [0, 0, 0] as Array<Number>;
+        _stageSqDiffSum = [0.0, 0.0, 0.0] as Array<Float>;
+        _stageSqDiffCount = [0, 0, 0] as Array<Number>;
+
         _lastValidRrMs = null;
         _rollingSqDiffs = [] as Array<Float>;
         _sessionSqDiffSum = 0.0;
         _sessionSqDiffCount = 0;
+
+        _lastBatchRr1 = 0;
+        _lastBatchRr2 = 0;
 
         _startStress = null;
         _currentStress = null;
@@ -102,6 +127,16 @@ class VagalMetricsTracker {
         _hrHistory = [] as Array<Number>;
         _stressHistory = [] as Array<Number>;
         _rmssdHistory = [] as Array<Number>;
+        _stageHistory = [] as Array<Number>;
+    }
+
+    //! Notify tracker of a macro-stage boundary (Baseline -> Breathing -> Recovery).
+    //! Breaks R-R pair continuity across stage boundaries for clean per-stage RMSSD.
+    public function setActiveStage(stage as Number) as Void {
+        if (stage >= BreathProtocol.STAGE_BASELINE && stage <= BreathProtocol.STAGE_RECOVERY) {
+            _activeStage = stage;
+            _lastValidRrMs = null;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -109,7 +144,6 @@ class VagalMetricsTracker {
     // -------------------------------------------------------------------------
 
     //! Maps vagal RMSSD (ms) onto a Garmin-style 1..100 Autonomic Stress Index using ln(RMSSD).
-    //! Higher RMSSD (stronger vagal tone) -> lower Stress (<25 Rest, 26-50 Low, 51-75 Med, 76+ High).
     public static function computeStressFromRmssd(rmssdMs as Float) as Number {
         var clamped = rmssdMs;
         if (clamped < 5.0) {
@@ -130,7 +164,6 @@ class VagalMetricsTracker {
     // Sensor Ingestion & Time-Series Snapshotting
     // -------------------------------------------------------------------------
 
-    //! Ingest a live heart rate sample (bpm) during an active session.
     public function recordHeartRate(hr as Number?) as Void {
         if (hr == null || hr < 30 || hr > 220) {
             return;
@@ -138,6 +171,12 @@ class VagalMetricsTracker {
         _currentHr = hr;
         _hrSum += hr;
         _hrCount += 1;
+
+        var sIdx = _activeStage - 1;
+        if (sIdx >= 0 && sIdx < 3) {
+            _stageHrSum[sIdx] = _stageHrSum[sIdx] + hr;
+            _stageHrCount[sIdx] = _stageHrCount[sIdx] + 1;
+        }
 
         var minHr = _minHr;
         if (minHr == null || hr < minHr) {
@@ -155,19 +194,32 @@ class VagalMetricsTracker {
         }
     }
 
-    //! Ingest an array of beat-to-beat R-R intervals (ms) from SensorData.heartRateData.
+    //! Ingest a 1-second batch of raw beat-to-beat R-R intervals (ms).
     public function recordHeartBeatIntervals(intervals as Array<Number>?) as Void {
+        _lastBatchRr1 = 0;
+        _lastBatchRr2 = 0;
+
         if (intervals == null) {
             return;
         }
         var count = intervals.size();
+        var captured = 0;
         for (var i = 0; i < count; i++) {
-            recordSingleRrInterval(intervals[i]);
+            var rr = intervals[i];
+            if (rr >= MIN_VALID_RR_MS && rr <= MAX_VALID_RR_MS) {
+                if (captured == 0) {
+                    _lastBatchRr1 = rr;
+                    captured = 1;
+                } else if (captured == 1) {
+                    _lastBatchRr2 = rr;
+                    captured = 2;
+                }
+            }
+            recordSingleRrInterval(rr);
         }
         updateAutonomicStress();
     }
 
-    //! Validate and ingest one R-R interval (ms) with Malik physiological artifact filtering.
     public function recordSingleRrInterval(rrMs as Number) as Boolean {
         if (rrMs < MIN_VALID_RR_MS || rrMs > MAX_VALID_RR_MS) {
             _lastValidRrMs = null;
@@ -192,13 +244,19 @@ class VagalMetricsTracker {
         var sqDiff = diff.toFloat() * diff.toFloat();
         _sessionSqDiffSum += sqDiff;
         _sessionSqDiffCount += 1;
+
+        var sIdx = _activeStage - 1;
+        if (sIdx >= 0 && sIdx < 3) {
+            _stageSqDiffSum[sIdx] = _stageSqDiffSum[sIdx] + sqDiff;
+            _stageSqDiffCount[sIdx] = _stageSqDiffCount[sIdx] + 1;
+        }
+
         pushRollingSqDiff(sqDiff);
 
         _lastValidRrMs = rrMs;
         return true;
     }
 
-    //! Record Garmin all-day stress score (1..100) when available.
     public function recordStressScore(stress as Number?) as Void {
         if (stress == null || stress < 1 || stress > 100) {
             return;
@@ -209,8 +267,7 @@ class VagalMetricsTracker {
         _currentStress = stress;
     }
 
-    //! Append one synchronized snapshot of HR, Stress (0-100), and rolling RMSSD (ms)
-    //! for the post-session graphs. Call every ~2 seconds while session is active.
+    //! Append one synchronized snapshot of HR, Stress (0-100), RMSSD (ms), and macro-stage.
     public function recordHistorySnapshot() as Void {
         if (_hrHistory.size() >= MAX_HISTORY_POINTS) {
             return;
@@ -218,6 +275,7 @@ class VagalMetricsTracker {
 
         var hrVal = _currentHr;
         _hrHistory.add((hrVal != null) ? hrVal : -1);
+        _stageHistory.add(_activeStage);
 
         var rmssd = getRollingRmssdMs();
         if (rmssd != null) {
@@ -261,7 +319,55 @@ class VagalMetricsTracker {
     }
 
     // -------------------------------------------------------------------------
-    // Computed Vagal & Cardiovascular Readouts
+    // Per-Stage Lab Comparison Getters (Baseline vs. Breathing vs. Recovery)
+    // -------------------------------------------------------------------------
+
+    public function getStageAvgHeartRate(stage as Number) as Number? {
+        var idx = stage - 1;
+        if (idx < 0 || idx >= 3 || _stageHrCount[idx] <= 0) {
+            return null;
+        }
+        return Math.round(_stageHrSum[idx].toFloat() / _stageHrCount[idx].toFloat()).toNumber();
+    }
+
+    public function getStageRmssdMs(stage as Number) as Float? {
+        var idx = stage - 1;
+        if (idx < 0 || idx >= 3 || _stageSqDiffCount[idx] < MIN_DIFFS_FOR_RMSSD) {
+            return null;
+        }
+        return Math.sqrt(_stageSqDiffSum[idx] / _stageSqDiffCount[idx].toFloat()).toFloat();
+    }
+
+    public function getStageAutonomicStress(stage as Number) as Number? {
+        var rmssd = getStageRmssdMs(stage);
+        if (rmssd == null) {
+            return null;
+        }
+        return VagalMetricsTracker.computeStressFromRmssd(rmssd);
+    }
+
+    //! True Lab Mode apples-to-apples HR delta: Recovery Avg HR - Baseline Avg HR.
+    public function getLabHrDelta() as Number? {
+        var baseHr = getStageAvgHeartRate(BreathProtocol.STAGE_BASELINE);
+        var recHr = getStageAvgHeartRate(BreathProtocol.STAGE_RECOVERY);
+        if (baseHr == null || recHr == null) {
+            return null;
+        }
+        return recHr - baseHr;
+    }
+
+    //! True Lab Mode carried-over vagal delta: Recovery RMSSD - Baseline RMSSD (ms).
+    public function getLabRmssdDeltaMs() as Float? {
+        var baseR = getStageRmssdMs(BreathProtocol.STAGE_BASELINE);
+        var recR = getStageRmssdMs(BreathProtocol.STAGE_RECOVERY);
+        if (baseR == null || recR == null) {
+            return null;
+        }
+        return recR - baseR;
+    }
+
+    // -------------------------------------------------------------------------
+    // General Cardiovascular & Raw R-R Getters
     // -------------------------------------------------------------------------
 
     public function getCurrentHeartRate() as Number? {
@@ -291,7 +397,6 @@ class VagalMetricsTracker {
         return Math.round(_hrSum.toFloat() / _hrCount.toFloat()).toNumber();
     }
 
-    //! Live heart rate change in bpm (currentHR - startHR). Negative indicates HR dropped.
     public function getHeartRateDelta() as Number? {
         var cur = _currentHr;
         var startAvg = _startHrAvg;
@@ -301,7 +406,6 @@ class VagalMetricsTracker {
         return Math.round(cur.toFloat() - startAvg).toNumber();
     }
 
-    //! Rolling RMSSD HRV (ms) over recent ~30s of artifact-filtered beat-to-beat intervals.
     public function getRollingRmssdMs() as Float? {
         var n = _rollingSqDiffs.size();
         if (n < MIN_DIFFS_FOR_RMSSD) {
@@ -314,7 +418,6 @@ class VagalMetricsTracker {
         return Math.sqrt(sum / n.toFloat()).toFloat();
     }
 
-    //! Full-session mean RMSSD HRV (ms) for post-session summary and FIT logging.
     public function getSessionRmssdMs() as Float? {
         if (_sessionSqDiffCount < MIN_DIFFS_FOR_RMSSD) {
             return null;
@@ -326,7 +429,14 @@ class VagalMetricsTracker {
         return _sessionSqDiffCount;
     }
 
-    //! Returns HRV-derived autonomic stress (1-100), falling back to Garmin stressScore if needed.
+    public function getLastBatchRr1() as Number {
+        return _lastBatchRr1;
+    }
+
+    public function getLastBatchRr2() as Number {
+        return _lastBatchRr2;
+    }
+
     public function getStartEffectiveStress() as Number? {
         var autoStart = _startAutoStress;
         if (autoStart != null) {
@@ -343,18 +453,6 @@ class VagalMetricsTracker {
         return _currentStress;
     }
 
-    public function getStartStress() as Number? {
-        return _startStress;
-    }
-
-    public function getCurrentStress() as Number? {
-        return _currentStress;
-    }
-
-    // -------------------------------------------------------------------------
-    // Time-Series History Accessors (For Post-Session Graphs)
-    // -------------------------------------------------------------------------
-
     public function getHrHistory() as Array<Number> {
         return _hrHistory;
     }
@@ -365,5 +463,9 @@ class VagalMetricsTracker {
 
     public function getRmssdHistory() as Array<Number> {
         return _rmssdHistory;
+    }
+
+    public function getStageHistory() as Array<Number> {
+        return _stageHistory;
     }
 }

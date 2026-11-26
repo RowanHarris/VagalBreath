@@ -3,17 +3,8 @@ import Toybox.Lang;
 import Toybox.Math;
 import Toybox.WatchUi;
 
-//! Serene, high-contrast Venu 3 (454x454 AMOLED) breathing pacer & post-session graph UI.
-//!
-//! Full-screen dynamic ring geometry:
-//!   - Fully exhaled (0% fill): shrinks down to a tight 26px inner core circle
-//!   - Fully inhaled (100% fill): expands all the way out to the full bezel ring
-//!
-//! Scrollable Post-Session Pages (Swipe Up/Down after completing a session):
-//!   - Page 0: Numeric Overview (HR drop, Session Vagal RMSSD, Autonomic Stress)
-//!   - Page 1: Heart Rate Graph (bpm curve over full session)
-//!   - Page 2: Autonomic Stress Graph (0-100 Garmin-style color-coded zone bars)
-//!   - Page 3: Vagal Tone / RMSSD HRV Graph (ms curve showing parasympathetic lift)
+//! Serene, high-contrast Venu 3 (454x454 AMOLED) breathing pacer, Lab Mode Baseline/Recovery
+//! screens, and 4 scrollable post-session graph pages with stage-boundary markers.
 class BreathView extends WatchUi.View {
 
     // Bioluminescent calm palette on true black AMOLED
@@ -21,6 +12,8 @@ class BreathView extends WatchUi.View {
     private static const COLOR_TOP_OFF as Number = 0xB8FFFF;
     private static const COLOR_HOLD as Number = 0x8A9EFF;
     private static const COLOR_EXHALE as Number = 0x2D8CFF;
+    private static const COLOR_BASELINE as Number = 0x7C9BFF;
+    private static const COLOR_RECOVERY as Number = 0x4CE6A0;
     private static const COLOR_PROGRESS_BG as Number = 0x1D2830;
     private static const COLOR_HALO_DIM as Number = 0x12262B;
     private static const COLOR_TEXT_MUTED as Number = 0xA8BCC6;
@@ -29,6 +22,7 @@ class BreathView extends WatchUi.View {
 
     // Graph palette
     private static const COLOR_GRID as Number = 0x26323A;
+    private static const COLOR_STAGE_DIVIDER as Number = 0x5B7382;
     private static const COLOR_HR_LINE as Number = 0xFF5272;
     private static const COLOR_HR_FILL as Number = 0x3D141F;
     private static const COLOR_HRV_LINE as Number = 0x00D4C8;
@@ -40,7 +34,6 @@ class BreathView extends WatchUi.View {
     private static const COLOR_STRESS_MED as Number = 0xFF7B29;
     private static const COLOR_STRESS_HIGH as Number = 0xFF3B30;
 
-    // Compact fully-exhaled core radius; full-inhale expands dynamically to outer bezel radius
     private static const CIRCLE_MIN_RADIUS as Float = 26.0;
     private static const BEZEL_INSET_PX as Number = 8;
 
@@ -49,6 +42,7 @@ class BreathView extends WatchUi.View {
     private var _fontTitle as Graphics.FontType;
     private var _fontPhase as Graphics.FontType;
     private var _fontCount as Graphics.FontType;
+    private var _fontBigTimer as Graphics.FontType;
     private var _fontBio as Graphics.FontType;
     private var _fontSmall as Graphics.FontType;
     private var _fontTiny as Graphics.FontType;
@@ -61,6 +55,7 @@ class BreathView extends WatchUi.View {
         _fontTitle = Graphics.FONT_SMALL;
         _fontPhase = Graphics.FONT_MEDIUM;
         _fontCount = Graphics.FONT_NUMBER_HOT;
+        _fontBigTimer = Graphics.FONT_NUMBER_THAI_HOT;
         _fontBio = Graphics.FONT_SMALL;
         _fontSmall = Graphics.FONT_XTINY;
         _fontTiny = Graphics.FONT_XTINY;
@@ -76,16 +71,18 @@ class BreathView extends WatchUi.View {
         var vTitle = loadVectorFont(textFaces, 30);
         var vPhase = loadVectorFont(textFaces, 42);
         var vCount = loadVectorFont(numFaces, 74);
+        var vBigTimer = loadVectorFont(numFaces, 102);
         var vBio = loadVectorFont(textFaces, 28);
         var vSmall = loadVectorFont(textFaces, 24);
         var vTiny = loadVectorFont(textFaces, 20);
-        var vSumVal = loadVectorFont(numFaces, 54);
+        var vSumVal = loadVectorFont(numFaces, 48);
 
-        if (vTitle != null && vPhase != null && vCount != null &&
+        if (vTitle != null && vPhase != null && vCount != null && vBigTimer != null &&
             vBio != null && vSmall != null && vTiny != null && vSumVal != null) {
             _fontTitle = vTitle;
             _fontPhase = vPhase;
             _fontCount = vCount;
+            _fontBigTimer = vBigTimer;
             _fontBio = vBio;
             _fontSmall = vSmall;
             _fontTiny = vTiny;
@@ -118,8 +115,10 @@ class BreathView extends WatchUi.View {
             drawReadyScreen(dc, width, height, cx, cy, proto);
         } else if (state == BreathProtocol.STATE_COMPLETE) {
             drawPostSessionPage(dc, width, height, cx, cy, proto);
+        } else if (proto.getActiveStage() == BreathProtocol.STAGE_BREATHING) {
+            drawBreathingPacerScreen(dc, width, height, cx, cy, proto, state == BreathProtocol.STATE_PAUSED);
         } else {
-            drawActiveScreen(dc, width, height, cx, cy, proto, state == BreathProtocol.STATE_PAUSED);
+            drawSpontaneousStageScreen(dc, width, height, cx, cy, proto, state == BreathProtocol.STATE_PAUSED);
         }
     }
 
@@ -144,7 +143,7 @@ class BreathView extends WatchUi.View {
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 19) / 100,
+            (height * 17) / 100,
             _fontSmall,
             "VAGAL BREATH",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -153,7 +152,7 @@ class BreathView extends WatchUi.View {
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 37) / 100,
+            (height * 33) / 100,
             _fontPhase,
             BreathProtocol.getProtocolShortName(protoId),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -162,18 +161,29 @@ class BreathView extends WatchUi.View {
         dc.setColor(COLOR_INHALE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 51) / 100,
+            (height * 46) / 100,
             _fontTitle,
             proto.getActiveCadenceText() + "  •  " + proto.getDurationMinutes().format("%d") + " MIN",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
+
+        if (proto.isLabModeEnabled()) {
+            dc.setColor(COLOR_BASELINE, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(
+                cx,
+                (height * 57) / 100,
+                _fontSmall,
+                "LAB: 2m BASE + 5m REC (" + proto.getTotalPlannedMinutes().format("%d") + "m)",
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+            );
+        }
 
         var hr = _app.getDisplayHeartRate();
         var hrText = (hr != null) ? (hr.format("%d") + " bpm") : "-- bpm";
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 66) / 100,
+            (height * 69) / 100,
             _fontTitle,
             hrText,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
@@ -182,18 +192,98 @@ class BreathView extends WatchUi.View {
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 81) / 100,
-            _fontSmall,
+            (height * 82) / 100,
+            _fontTiny,
             "TOP/TAP: START  •  SWIPE: SETUP",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
     }
 
     // -------------------------------------------------------------------------
-    // Active / Paused Full-Range Breathing Pacer Screen
+    // Lab Mode Spontaneous Stages: Stage 1 (BASELINE 2m) & Stage 3 (RECOVERY 5m)
     // -------------------------------------------------------------------------
 
-    private function drawActiveScreen(
+    private function drawSpontaneousStageScreen(
+        dc as Graphics.Dc,
+        width as Number,
+        height as Number,
+        cx as Number,
+        cy as Number,
+        proto as BreathProtocol,
+        isPaused as Boolean
+    ) as Void {
+        var isBaseline = (proto.getActiveStage() == BreathProtocol.STAGE_BASELINE);
+        var accent = isBaseline ? COLOR_BASELINE : COLOR_RECOVERY;
+        var outerR = cx - BEZEL_INSET_PX;
+
+        if (isPaused) {
+            dc.setColor(COLOR_PAUSED_RING, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(8);
+            dc.drawCircle(cx, cy, outerR);
+        } else {
+            dc.setColor(COLOR_PROGRESS_BG, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(5);
+            dc.drawCircle(cx, cy, outerR);
+            drawProgressArc(dc, cx, cy, outerR, proto.getStageProgressFraction(), accent, 5);
+        }
+
+        dc.setColor(accent, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(
+            cx,
+            (height * 20) / 100,
+            _fontTitle,
+            isPaused ? "PAUSED" : (isBaseline ? "PRE-BASELINE" : "POST-RECOVERY"),
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+        );
+
+        dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(
+            cx,
+            (height * 30) / 100,
+            _fontTiny,
+            "SIT STILL  •  BREATHE NORMALLY",
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+        );
+
+        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(
+            cx,
+            (height * 51) / 100,
+            _fontBigTimer,
+            BreathView.formatMinuteSecond(proto.getStageRemainingSeconds()),
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+        );
+
+        var tracker = _app.getTracker();
+        var hrLine = BreathView.formatHrWithDelta(tracker.getCurrentHeartRate(), tracker.getHeartRateDelta());
+        var delta = tracker.getHeartRateDelta();
+        var hrColor = (delta != null && delta < 0) ? COLOR_GOOD_DROP : Graphics.COLOR_WHITE;
+
+        dc.setColor(hrColor, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(
+            cx,
+            (height * 74) / 100,
+            _fontBio,
+            hrLine,
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+        );
+
+        var hrvLine = BreathView.formatRmssdLine(tracker.getRollingRmssdMs());
+        dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(
+            cx,
+            (height * 84) / 100,
+            _fontSmall,
+            hrvLine,
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Active / Paused Full-Range Breathing Pacer Screen (Stage 2)
+    // -------------------------------------------------------------------------
+
+    private function drawBreathingPacerScreen(
         dc as Graphics.Dc,
         width as Number,
         height as Number,
@@ -216,9 +306,7 @@ class BreathView extends WatchUi.View {
             dc.setColor(COLOR_PROGRESS_BG, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(4);
             dc.drawCircle(cx, cy, outerR);
-
-            var progress = proto.getSessionProgressFraction();
-            drawProgressArc(dc, cx, cy, outerR, progress, COLOR_TEXT_MUTED, 4);
+            drawProgressArc(dc, cx, cy, outerR, proto.getStageProgressFraction(), COLOR_TEXT_MUTED, 4);
         }
 
         var fill = proto.getLungFillFraction();
@@ -236,7 +324,7 @@ class BreathView extends WatchUi.View {
         dc.drawCircle(cx, cy, radius);
 
         var topText = BreathProtocol.getProtocolShortName(proto.getProtocolId()) +
-            "  " + BreathView.formatMinuteSecond(proto.getSessionRemainingSeconds());
+            "  " + BreathView.formatMinuteSecond(proto.getStageRemainingSeconds());
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
@@ -318,7 +406,7 @@ class BreathView extends WatchUi.View {
         drawPageIndicatorDots(dc, width, cy, page, BreathApp.SUMMARY_PAGE_COUNT);
     }
 
-    //! Page 0: Numeric Overview Summary
+    //! Page 0: Overview (Baseline -> Recovery apples-to-apples in Lab Mode)
     private function drawOverviewPage(
         dc as Graphics.Dc,
         width as Number,
@@ -332,66 +420,97 @@ class BreathView extends WatchUi.View {
         dc.drawCircle(cx, cy, cx - 8);
 
         var tracker = _app.getTracker();
+        var baseHr = tracker.getStageAvgHeartRate(BreathProtocol.STAGE_BASELINE);
+        var recHr = tracker.getStageAvgHeartRate(BreathProtocol.STAGE_RECOVERY);
+        var hasLabPair = proto.isLabModeEnabled() && (baseHr != null) && (recHr != null);
 
         dc.setColor(COLOR_GOOD_DROP, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 16) / 100,
+            (height * 15) / 100,
             _fontTitle,
-            "COMPLETE",
+            hasLabPair ? "BASE -> REC" : "COMPLETE",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 25) / 100,
+            (height * 24) / 100,
             _fontSmall,
             BreathProtocol.getProtocolShortName(proto.getProtocolId()) +
                 "  •  " + proto.getCompletedCycles().format("%d") + " CYCLES",
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        var startHr = tracker.getStartHeartRateRounded();
-        var endHr = tracker.getCurrentHeartRate();
-        var deltaHr = tracker.getHeartRateDelta();
+        // HR Comparison
         var hrSummary = "-- bpm";
-        if (startHr != null && endHr != null) {
-            hrSummary = startHr.format("%d") + " -> " + endHr.format("%d") + " bpm";
-            if (deltaHr != null) {
-                var sign = (deltaHr > 0) ? "+" : "";
-                hrSummary = hrSummary + " (" + sign + deltaHr.format("%d") + ")";
+        if (hasLabPair && baseHr != null && recHr != null) {
+            var d = recHr - baseHr;
+            var s = (d > 0) ? "+" : "";
+            hrSummary = "HR " + baseHr.format("%d") + " -> " + recHr.format("%d") + " (" + s + d.format("%d") + ")";
+        } else {
+            var startHr = tracker.getStartHeartRateRounded();
+            var endHr = tracker.getCurrentHeartRate();
+            var deltaHr = tracker.getHeartRateDelta();
+            if (startHr != null && endHr != null) {
+                hrSummary = "HR " + startHr.format("%d") + " -> " + endHr.format("%d");
+                if (deltaHr != null) {
+                    var sign = (deltaHr > 0) ? "+" : "";
+                    hrSummary = hrSummary + " (" + sign + deltaHr.format("%d") + ")";
+                }
             }
         }
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 42) / 100,
+            (height * 41) / 100,
             _fontTitle,
             hrSummary,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        var rmssd = tracker.getSessionRmssdMs();
-        var rmssdText = (rmssd != null)
-            ? ("HRV " + Math.round(rmssd).toNumber().format("%d") + " ms")
-            : "HRV -- ms";
+        // Vagal RMSSD HRV Comparison
+        var baseR = tracker.getStageRmssdMs(BreathProtocol.STAGE_BASELINE);
+        var recR = tracker.getStageRmssdMs(BreathProtocol.STAGE_RECOVERY);
+        var rmssdText = "HRV -- ms";
+        if (proto.isLabModeEnabled() && baseR != null && recR != null) {
+            var bInt = Math.round(baseR).toNumber();
+            var rInt = Math.round(recR).toNumber();
+            var dr = rInt - bInt;
+            var sr = (dr > 0) ? "+" : "";
+            rmssdText = "HRV " + bInt.format("%d") + "->" + rInt.format("%d") + " (" + sr + dr.format("%d") + ")";
+        } else {
+            var sessR = tracker.getSessionRmssdMs();
+            if (sessR != null) {
+                rmssdText = "HRV " + Math.round(sessR).toNumber().format("%d") + " ms";
+            }
+        }
         dc.setColor(COLOR_INHALE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
             cx,
-            (height * 57) / 100,
+            (height * 56) / 100,
             _fontSummaryVal,
             rmssdText,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
         );
 
-        var startS = tracker.getStartEffectiveStress();
-        var endS = tracker.getCurrentEffectiveStress();
+        // Stress Comparison
+        var baseS = tracker.getStageAutonomicStress(BreathProtocol.STAGE_BASELINE);
+        var recS = tracker.getStageAutonomicStress(BreathProtocol.STAGE_RECOVERY);
         var stressText = "STRESS --";
-        if (startS != null && endS != null) {
-            stressText = "STRESS " + startS.format("%d") + " -> " + endS.format("%d");
-        } else if (endS != null) {
-            stressText = "STRESS " + endS.format("%d");
+        if (proto.isLabModeEnabled() && baseS != null && recS != null) {
+            var ds = recS - baseS;
+            var ss = (ds > 0) ? "+" : "";
+            stressText = "STRESS " + baseS.format("%d") + " -> " + recS.format("%d") + " (" + ss + ds.format("%d") + ")";
+        } else {
+            var startS = tracker.getStartEffectiveStress();
+            var endS = tracker.getCurrentEffectiveStress();
+            if (startS != null && endS != null) {
+                stressText = "STRESS " + startS.format("%d") + " -> " + endS.format("%d");
+            } else if (endS != null) {
+                stressText = "STRESS " + endS.format("%d");
+            }
         }
         dc.setColor(COLOR_STRESS_LOW, Graphics.COLOR_TRANSPARENT);
         dc.drawText(
@@ -460,6 +579,7 @@ class BreathView extends WatchUi.View {
         drawLineGraph(
             dc,
             hrHist,
+            tracker.getStageHistory(),
             chartX,
             chartY,
             chartW,
@@ -529,7 +649,16 @@ class BreathView extends WatchUi.View {
         var chartW = (width * 67) / 100;
         var chartH = (height * 42) / 100;
 
-        drawStressBarGraph(dc, stressHist, chartX, chartY, chartW, chartH, proto.getTotalElapsedSeconds());
+        drawStressBarGraph(
+            dc,
+            stressHist,
+            tracker.getStageHistory(),
+            chartX,
+            chartY,
+            chartW,
+            chartH,
+            proto.getTotalElapsedSeconds()
+        );
 
         var stats = computeArrayStats(stressHist);
         var avgStr = (stats[0] > 0) ? stats[2].format("%d") : "--";
@@ -584,6 +713,7 @@ class BreathView extends WatchUi.View {
         drawLineGraph(
             dc,
             hrvHist,
+            tracker.getStageHistory(),
             chartX,
             chartY,
             chartW,
@@ -610,13 +740,13 @@ class BreathView extends WatchUi.View {
     }
 
     // -------------------------------------------------------------------------
-    // Chart Rendering Primitives
+    // Chart Rendering Primitives (with Lab Stage Boundary Dividers)
     // -------------------------------------------------------------------------
 
-    //! Draws a shaded line graph with auto-scaled (or fixed) Y-axis and time X-axis.
     private function drawLineGraph(
         dc as Graphics.Dc,
         values as Array<Number>,
+        stages as Array<Number>,
         x as Number,
         y as Number,
         w as Number,
@@ -632,7 +762,6 @@ class BreathView extends WatchUi.View {
         var dataMin = stats[1];
         var dataMax = stats[3];
 
-        // Subtle horizontal grid lines (top, mid, bottom)
         dc.setColor(COLOR_GRID, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(1);
         dc.drawLine(x, y, x + w, y);
@@ -662,7 +791,6 @@ class BreathView extends WatchUi.View {
             yMax = yMin + 6;
         }
 
-        // Y-axis max & min tick labels on the left
         dc.setColor(COLOR_TEXT_MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(x - 8, y, _fontTiny, yMax.format("%d"), Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.drawText(x - 8, y + h, _fontTiny, yMin.format("%d"), Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
@@ -686,6 +814,9 @@ class BreathView extends WatchUi.View {
             }
         }
 
+        // Lab stage vertical boundary markers (Baseline | Breathing | Recovery)
+        drawStageBoundaryLines(dc, stages, x, y, w, h);
+
         // Pass 2: Crisp 3px polyline
         dc.setColor(lineColor, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(3);
@@ -705,17 +836,16 @@ class BreathView extends WatchUi.View {
         }
     }
 
-    //! Draws a Garmin-style 0-100 Stress bar chart color-coded by autonomic stress zone.
     private function drawStressBarGraph(
         dc as Graphics.Dc,
         values as Array<Number>,
+        stages as Array<Number>,
         x as Number,
         y as Number,
         w as Number,
         h as Number,
         totalSec as Float
     ) as Void {
-        // Horizontal zone guide lines at 100, 75, 50, 25, 0
         dc.setColor(COLOR_GRID, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(1);
         for (var q = 0; q <= 4; q++) {
@@ -743,7 +873,6 @@ class BreathView extends WatchUi.View {
             return;
         }
 
-        // Bucket into at most 36 crisp vertical bars across the chart width
         var n = values.size();
         var maxBars = 36;
         var numBars = (n < maxBars) ? n : maxBars;
@@ -787,6 +916,38 @@ class BreathView extends WatchUi.View {
 
                 dc.setColor(colorForStressZone(avgVal), Graphics.COLOR_TRANSPARENT);
                 dc.fillRectangle(bx, by, barW, barH);
+            }
+        }
+
+        drawStageBoundaryLines(dc, stages, x, y, w, h);
+    }
+
+    //! Draws crisp vertical stage boundary markers where Baseline -> Breathing -> Recovery occurred.
+    private function drawStageBoundaryLines(
+        dc as Graphics.Dc,
+        stages as Array<Number>,
+        x as Number,
+        y as Number,
+        w as Number,
+        h as Number
+    ) as Void {
+        var n = stages.size();
+        if (n < 2) {
+            return;
+        }
+        dc.setColor(COLOR_STAGE_DIVIDER, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(2);
+        for (var i = 1; i < n; i++) {
+            if (stages[i] != stages[i - 1]) {
+                var px = x + ((i * (w - 1)) / (n - 1));
+                // Subtle dashed vertical line
+                for (var dy = 0; dy < h; dy += 10) {
+                    var segEnd = dy + 5;
+                    if (segEnd > h) {
+                        segEnd = h;
+                    }
+                    dc.drawLine(px, y + dy, px, y + segEnd);
+                }
             }
         }
     }
@@ -855,7 +1016,6 @@ class BreathView extends WatchUi.View {
         return COLOR_STRESS_HIGH;
     }
 
-    //! Computes [validCount, min, avg, max] across non-negative entries in an integer series.
     private function computeArrayStats(values as Array<Number>) as Array<Number> {
         var count = 0;
         var minV = 0;
@@ -883,10 +1043,6 @@ class BreathView extends WatchUi.View {
         var avgV = (count > 0) ? Math.round(sum.toFloat() / count.toFloat()).toNumber() : 0;
         return [count, minV, avgV, maxV] as Array<Number>;
     }
-
-    // -------------------------------------------------------------------------
-    // Drawing & Pure Formatting Helpers
-    // -------------------------------------------------------------------------
 
     private function colorForPhase(phaseType as Number) as Number {
         if (phaseType == BreathProtocol.PHASE_INHALE) {

@@ -127,6 +127,7 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
         var protoLabel = WatchUi.loadResource(Rez.Strings.MenuProtocol) as String;
         var timingLabel = WatchUi.loadResource(Rez.Strings.MenuCustomizeTiming) as String;
         var durLabel = WatchUi.loadResource(Rez.Strings.MenuDuration) as String;
+        var labLabel = WatchUi.loadResource(Rez.Strings.MenuLabMode) as String;
         var startLabel = WatchUi.loadResource(Rez.Strings.MenuStart) as String;
 
         var protoItem = new WatchUi.MenuItem(
@@ -147,11 +148,19 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
             :duration,
             null
         );
+        var labSub = proto.isLabModeEnabled() ? "ON (2m Base + 5m Rec)" : "OFF (Breathing only)";
+        var labItem = new WatchUi.MenuItem(
+            labLabel,
+            labSub,
+            :lab_mode,
+            null
+        );
 
         var menu = new WatchUi.Menu2({ :title => title });
         menu.addItem(protoItem);
         menu.addItem(timingItem);
         menu.addItem(durItem);
+        menu.addItem(labItem);
         menu.addItem(new WatchUi.MenuItem(startLabel, null, :start, null));
 
         WatchUi.pushView(menu, new BreathSetupMenuDelegate(_app, protoItem, timingItem), WatchUi.SLIDE_UP);
@@ -212,6 +221,9 @@ class BreathSetupMenuDelegate extends WatchUi.Menu2InputDelegate {
             pushStageTimingMenu();
         } else if (id == :duration) {
             pushDurationPicker(item);
+        } else if (id == :lab_mode) {
+            var enabled = _app.toggleLabMode();
+            item.setSubLabel(enabled ? "ON (2m Base + 5m Rec)" : "OFF (Breathing only)");
         } else if (id == :start) {
             WatchUi.popView(WatchUi.SLIDE_DOWN);
             _app.startSession();

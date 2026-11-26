@@ -6,6 +6,7 @@
     <string id="MenuProtocol">Protocol</string>
     <string id="MenuCustomizeTiming">Customize Timing</string>
     <string id="MenuDuration">Duration</string>
+    <string id="MenuLabMode">Lab Mode</string>
     <string id="MenuStart">Start Session</string>
 
     <!-- Custom Stage Timing Menu -->
@@ -27,7 +28,7 @@
     <string id="ProtoBoxSub">4-4-4-4s • Calm Focus</string>
 
     <!-- Duration Picker -->
-    <string id="DurMenuTitle">Session Length</string>
+    <string id="DurMenuTitle">Breathing Length</string>
     <string id="Dur2Min">2 Minutes</string>
     <string id="Dur2MinSub">Quick nervous system reset</string>
     <string id="Dur5Min">5 Minutes</string>
@@ -58,4 +59,12 @@
     <string id="FitLiveStressChart">Autonomic Stress</string>
     <string id="FitLiveStressLabel">Stress Index</string>
     <string id="FitLiveStressUnits">pts</string>
+    <string id="FitStageCodeLabel">Lab Stage</string>
+    <string id="FitStageCodeUnits">stage</string>
+    <string id="FitRr1Label">RR Interval 1</string>
+    <string id="FitRr2Label">RR Interval 2</string>
+    <string id="FitBaseRmssdLabel">Baseline RMSSD</string>
+    <string id="FitRecRmssdLabel">Recovery RMSSD</string>
+    <string id="FitBaseHrLabel">Baseline HR</string>
+    <string id="FitRecHrLabel">Recovery HR</string>
 </resources>

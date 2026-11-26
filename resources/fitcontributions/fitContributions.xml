@@ -46,5 +46,54 @@
             dataLabel="@Strings.FitLiveStressLabel"
             unitLabel="@Strings.FitLiveStressUnits"
             fillColor="#FFB84D" />
+        <fitField
+            id="6"
+            displayInChart="false"
+            sortOrder="6"
+            precision="0"
+            dataLabel="@Strings.FitStageCodeLabel"
+            unitLabel="@Strings.FitStageCodeUnits" />
+        <fitField
+            id="7"
+            displayInChart="false"
+            sortOrder="7"
+            precision="0"
+            dataLabel="@Strings.FitRr1Label"
+            unitLabel="@Strings.FitRmssdUnits" />
+        <fitField
+            id="8"
+            displayInChart="false"
+            sortOrder="8"
+            precision="0"
+            dataLabel="@Strings.FitRr2Label"
+            unitLabel="@Strings.FitRmssdUnits" />
+        <fitField
+            id="9"
+            displayInActivitySummary="true"
+            sortOrder="9"
+            precision="1"
+            dataLabel="@Strings.FitBaseRmssdLabel"
+            unitLabel="@Strings.FitRmssdUnits" />
+        <fitField
+            id="10"
+            displayInActivitySummary="true"
+            sortOrder="10"
+            precision="1"
+            dataLabel="@Strings.FitRecRmssdLabel"
+            unitLabel="@Strings.FitRmssdUnits" />
+        <fitField
+            id="11"
+            displayInActivitySummary="true"
+            sortOrder="11"
+            precision="0"
+            dataLabel="@Strings.FitBaseHrLabel"
+            unitLabel="@Strings.FitHrDropUnits" />
+        <fitField
+            id="12"
+            displayInActivitySummary="true"
+            sortOrder="12"
+            precision="0"
+            dataLabel="@Strings.FitRecHrLabel"
+            unitLabel="@Strings.FitHrDropUnits" />
     </fitContributions>
 </resources>

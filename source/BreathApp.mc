@@ -14,18 +14,16 @@ import Toybox.WatchUi;
 
 //! Main entry point and session controller for VagalBreath (Garmin Venu 3).
 //!
-//! Features:
-//!   - 5 peer-reviewed vagal-tone / stress-reduction breathing protocols with per-stage customization
-//!   - Distinct eyes-closed tactile haptic signatures per breath phase
-//!   - Live HR, HR drop, Garmin Stress, and real beat-to-beat RMSSD HRV + 2s history buffers
-//!   - 4 scrollable post-session pages (Summary, HR Graph, Autonomic Stress Graph, Vagal HRV Graph)
-//!   - Native Garmin Breathwork FIT recording (SPORT_TRAINING / SUB_SPORT_BREATHING)
+//! Includes Lab Mode (default ON): 2 min Pre-Baseline -> Active Breathing -> 5 min Post-Recovery,
+//! partitioned by session.addLap() and logged at 1 Hz with raw beat-to-beat R-R intervals,
+//! stage codes, live RMSSD, live Autonomic Stress, and Baseline vs. Recovery session summaries.
 class BreathApp extends Application.AppBase {
 
     public static const SUMMARY_PAGE_COUNT as Number = 4;
 
     private static const STORAGE_KEY_PROTOCOL as String = "vb_protocol_id";
     private static const STORAGE_KEY_DURATION as String = "vb_duration_min";
+    private static const STORAGE_KEY_LAB_MODE as String = "vb_lab_mode";
 
     // Developer FIT field IDs matching resources/fitcontributions/fitContributions.xml
     private static const FIT_FIELD_PROTOCOL_ID as Number = 0;
@@ -34,6 +32,13 @@ class BreathApp extends Application.AppBase {
     private static const FIT_FIELD_CYCLES_ID as Number = 3;
     private static const FIT_FIELD_LIVE_RMSSD_ID as Number = 4;
     private static const FIT_FIELD_LIVE_STRESS_ID as Number = 5;
+    private static const FIT_FIELD_STAGE_CODE_ID as Number = 6;
+    private static const FIT_FIELD_RR1_ID as Number = 7;
+    private static const FIT_FIELD_RR2_ID as Number = 8;
+    private static const FIT_FIELD_BASE_RMSSD_ID as Number = 9;
+    private static const FIT_FIELD_REC_RMSSD_ID as Number = 10;
+    private static const FIT_FIELD_BASE_HR_ID as Number = 11;
+    private static const FIT_FIELD_REC_HR_ID as Number = 12;
 
     // 100ms animation tick (10 Hz) for smooth breathing circle pacing on AMOLED
     private static const TICK_INTERVAL_MS as Number = 100;
@@ -48,6 +53,13 @@ class BreathApp extends Application.AppBase {
     private var _fitCycles as FitContributor.Field?;
     private var _fitLiveRmssd as FitContributor.Field?;
     private var _fitLiveStress as FitContributor.Field?;
+    private var _fitStageCode as FitContributor.Field?;
+    private var _fitRr1 as FitContributor.Field?;
+    private var _fitRr2 as FitContributor.Field?;
+    private var _fitBaseRmssd as FitContributor.Field?;
+    private var _fitRecRmssd as FitContributor.Field?;
+    private var _fitBaseHr as FitContributor.Field?;
+    private var _fitRecHr as FitContributor.Field?;
 
     private var _tickTimer as Timer.Timer?;
     private var _lastTickMs as Number?;
@@ -71,7 +83,14 @@ class BreathApp extends Application.AppBase {
             savedDur = rawDur;
         }
 
-        _protocol = new BreathProtocol(savedProto, savedDur);
+        // Lab Mode defaults ON so every protocol trial captures 2m Baseline + 5m Recovery
+        var savedLabMode = true;
+        var rawLab = Storage.getValue(STORAGE_KEY_LAB_MODE);
+        if (rawLab instanceof Boolean) {
+            savedLabMode = rawLab;
+        }
+
+        _protocol = new BreathProtocol(savedProto, savedDur, savedLabMode);
         loadSavedPhaseTimings(savedProto);
         _tracker = new VagalMetricsTracker();
         _session = null;
@@ -82,6 +101,13 @@ class BreathApp extends Application.AppBase {
         _fitCycles = null;
         _fitLiveRmssd = null;
         _fitLiveStress = null;
+        _fitStageCode = null;
+        _fitRr1 = null;
+        _fitRr2 = null;
+        _fitBaseRmssd = null;
+        _fitRecRmssd = null;
+        _fitBaseHr = null;
+        _fitRecHr = null;
 
         _tickTimer = null;
         _lastTickMs = null;
@@ -158,13 +184,14 @@ class BreathApp extends Application.AppBase {
         var hrData = data.heartRateData;
         if (hrData != null) {
             _tracker.recordHeartBeatIntervals(hrData.heartBeatIntervals);
+            syncRawRrFitFields();
         }
     }
 
     public function onTickTimer() as Void {
         var state = _protocol.getState();
 
-        // Sample HR, Stress, and per-second FIT chart streams once per second (every 10 ticks)
+        // Sample HR, Stress, and per-second FIT record fields once per second
         _sensorPollCounter += 1;
         if (_sensorPollCounter >= 10) {
             _sensorPollCounter = 0;
@@ -197,6 +224,14 @@ class BreathApp extends Application.AppBase {
         var ev = _protocol.tick(deltaMs);
         if (ev == BreathProtocol.EVENT_PHASE_CHANGED) {
             vibrateForPhase(_protocol.getCurrentPhaseType());
+            syncFitFields();
+        } else if (ev == BreathProtocol.EVENT_ENTER_BREATHING) {
+            markFitLapBoundary(BreathProtocol.STAGE_BREATHING);
+            vibrateStageStartBreathing();
+            syncFitFields();
+        } else if (ev == BreathProtocol.EVENT_ENTER_RECOVERY) {
+            markFitLapBoundary(BreathProtocol.STAGE_RECOVERY);
+            vibrateStageEnterRecovery();
             syncFitFields();
         } else if (ev == BreathProtocol.EVENT_SESSION_COMPLETE) {
             finalizeCompletedSession();
@@ -231,6 +266,14 @@ class BreathApp extends Application.AppBase {
         }
         _protocol.resetCurrentProtocolDefaults();
         WatchUi.requestUpdate();
+    }
+
+    public function toggleLabMode() as Boolean {
+        var next = !_protocol.isLabModeEnabled();
+        _protocol.setLabModeEnabled(next);
+        Storage.setValue(STORAGE_KEY_LAB_MODE, next);
+        WatchUi.requestUpdate();
+        return next;
     }
 
     private function phaseStorageKey(protocolId as Number, phaseIndex as Number) as String {
@@ -272,7 +315,10 @@ class BreathApp extends Application.AppBase {
             return;
         }
 
-        _tracker.reset();
+        _protocol.start();
+        var initialStage = _protocol.getActiveStage();
+
+        _tracker.reset(initialStage);
         _sensorPollCounter = 0;
         _historyPollCounter = 0;
         _summaryPage = 0;
@@ -280,8 +326,13 @@ class BreathApp extends Application.AppBase {
         pollVitals(true);
         _tracker.recordHistorySnapshot();
 
+        var sessionName = BreathProtocol.getProtocolShortName(_protocol.getProtocolId());
+        if (_protocol.isLabModeEnabled()) {
+            sessionName = sessionName + " Lab";
+        }
+
         var session = ActivityRecording.createSession({
-            :name => BreathProtocol.getProtocolShortName(_protocol.getProtocolId()),
+            :name => sessionName,
             :sport => Activity.SPORT_TRAINING,
             :subSport => Activity.SUB_SPORT_BREATHING
         });
@@ -290,70 +341,105 @@ class BreathApp extends Application.AppBase {
             "breath_protocol",
             FIT_FIELD_PROTOCOL_ID,
             FitContributor.DATA_TYPE_UINT8,
-            {
-                :mesgType => FitContributor.MESG_TYPE_SESSION,
-                :units => "id"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "id" }
         );
 
         _fitHrDrop = session.createField(
             "hr_drop_bpm",
             FIT_FIELD_HR_DROP_ID,
             FitContributor.DATA_TYPE_SINT16,
-            {
-                :mesgType => FitContributor.MESG_TYPE_SESSION,
-                :units => "bpm"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "bpm" }
         );
 
         _fitRmssd = session.createField(
             "vagal_rmssd",
             FIT_FIELD_RMSSD_ID,
             FitContributor.DATA_TYPE_FLOAT,
-            {
-                :mesgType => FitContributor.MESG_TYPE_SESSION,
-                :units => "ms"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms" }
         );
 
         _fitCycles = session.createField(
             "breath_cycles",
             FIT_FIELD_CYCLES_ID,
             FitContributor.DATA_TYPE_UINT16,
-            {
-                :mesgType => FitContributor.MESG_TYPE_SESSION,
-                :units => "cycles"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "cycles" }
         );
 
         _fitLiveRmssd = session.createField(
             "live_rmssd",
             FIT_FIELD_LIVE_RMSSD_ID,
             FitContributor.DATA_TYPE_FLOAT,
-            {
-                :mesgType => FitContributor.MESG_TYPE_RECORD,
-                :units => "ms"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_RECORD, :units => "ms" }
         );
 
         _fitLiveStress = session.createField(
             "live_stress",
             FIT_FIELD_LIVE_STRESS_ID,
             FitContributor.DATA_TYPE_UINT8,
-            {
-                :mesgType => FitContributor.MESG_TYPE_RECORD,
-                :units => "pts"
-            }
+            { :mesgType => FitContributor.MESG_TYPE_RECORD, :units => "pts" }
+        );
+
+        _fitStageCode = session.createField(
+            "stage_code",
+            FIT_FIELD_STAGE_CODE_ID,
+            FitContributor.DATA_TYPE_UINT8,
+            { :mesgType => FitContributor.MESG_TYPE_RECORD, :units => "stage" }
+        );
+
+        _fitRr1 = session.createField(
+            "rr1_ms",
+            FIT_FIELD_RR1_ID,
+            FitContributor.DATA_TYPE_UINT16,
+            { :mesgType => FitContributor.MESG_TYPE_RECORD, :units => "ms" }
+        );
+
+        _fitRr2 = session.createField(
+            "rr2_ms",
+            FIT_FIELD_RR2_ID,
+            FitContributor.DATA_TYPE_UINT16,
+            { :mesgType => FitContributor.MESG_TYPE_RECORD, :units => "ms" }
+        );
+
+        _fitBaseRmssd = session.createField(
+            "base_rmssd",
+            FIT_FIELD_BASE_RMSSD_ID,
+            FitContributor.DATA_TYPE_FLOAT,
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms" }
+        );
+
+        _fitRecRmssd = session.createField(
+            "rec_rmssd",
+            FIT_FIELD_REC_RMSSD_ID,
+            FitContributor.DATA_TYPE_FLOAT,
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "ms" }
+        );
+
+        _fitBaseHr = session.createField(
+            "base_hr",
+            FIT_FIELD_BASE_HR_ID,
+            FitContributor.DATA_TYPE_UINT8,
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "bpm" }
+        );
+
+        _fitRecHr = session.createField(
+            "rec_hr",
+            FIT_FIELD_REC_HR_ID,
+            FitContributor.DATA_TYPE_UINT8,
+            { :mesgType => FitContributor.MESG_TYPE_SESSION, :units => "bpm" }
         );
 
         _session = session;
         session.start();
 
-        _protocol.start();
         _lastTickMs = System.getTimer();
+        syncRecordFitFields();
         syncFitFields();
 
-        vibrateForPhase(_protocol.getCurrentPhaseType());
+        if (initialStage == BreathProtocol.STAGE_BASELINE) {
+            vibrateSoftStart();
+        } else {
+            vibrateForPhase(_protocol.getCurrentPhaseType());
+        }
         WatchUi.requestUpdate();
     }
 
@@ -382,11 +468,14 @@ class BreathApp extends Application.AppBase {
         }
         _protocol.resume();
         _lastTickMs = System.getTimer();
-        vibrateForPhase(_protocol.getCurrentPhaseType());
+        if (_protocol.getActiveStage() == BreathProtocol.STAGE_BREATHING) {
+            vibrateForPhase(_protocol.getCurrentPhaseType());
+        } else {
+            vibrateSoftStart();
+        }
         WatchUi.requestUpdate();
     }
 
-    //! End early from the Pause menu to inspect all post-session graphs before Saving/Discarding.
     public function finishToReview() as Void {
         _protocol.completeEarly();
         finalizeCompletedSession();
@@ -445,8 +534,18 @@ class BreathApp extends Application.AppBase {
     }
 
     // -------------------------------------------------------------------------
-    // Internal Helpers & Eyes-Closed Tactile Haptic Signatures
+    // Internal FIT & Haptic Helpers
     // -------------------------------------------------------------------------
+
+    private function markFitLapBoundary(newStage as Number) as Void {
+        var session = _session;
+        if (session != null && session.isRecording()) {
+            session.addLap();
+        }
+        _tracker.setActiveStage(newStage);
+        _tracker.recordHistorySnapshot();
+        syncRecordFitFields();
+    }
 
     private function finalizeCompletedSession() as Void {
         _lastTickMs = null;
@@ -491,7 +590,23 @@ class BreathApp extends Application.AppBase {
         }
     }
 
+    private function syncRawRrFitFields() as Void {
+        var fRr1 = _fitRr1;
+        if (fRr1 != null) {
+            fRr1.setData(_tracker.getLastBatchRr1());
+        }
+        var fRr2 = _fitRr2;
+        if (fRr2 != null) {
+            fRr2.setData(_tracker.getLastBatchRr2());
+        }
+    }
+
     private function syncRecordFitFields() as Void {
+        var fStage = _fitStageCode;
+        if (fStage != null) {
+            fStage.setData(_protocol.getActiveStage());
+        }
+
         var rmssd = _tracker.getRollingRmssdMs();
         if (rmssd != null) {
             var fLiveRmssd = _fitLiveRmssd;
@@ -511,15 +626,18 @@ class BreathApp extends Application.AppBase {
             fProto.setData(_protocol.getProtocolId());
         }
 
+        // Prefer true Lab Mode (Recovery - Baseline) delta when available
         var fHrDrop = _fitHrDrop;
         if (fHrDrop != null) {
-            var delta = _tracker.getHeartRateDelta();
+            var labDelta = _tracker.getLabHrDelta();
+            var delta = (labDelta != null) ? labDelta : _tracker.getHeartRateDelta();
             fHrDrop.setData((delta != null) ? delta : 0);
         }
 
         var fRmssd = _fitRmssd;
         if (fRmssd != null) {
-            var rmssd = _tracker.getSessionRmssdMs();
+            var recRmssd = _tracker.getStageRmssdMs(BreathProtocol.STAGE_RECOVERY);
+            var rmssd = (recRmssd != null) ? recRmssd : _tracker.getSessionRmssdMs();
             fRmssd.setData((rmssd != null) ? rmssd : 0.0);
         }
 
@@ -527,6 +645,53 @@ class BreathApp extends Application.AppBase {
         if (fCycles != null) {
             fCycles.setData(_protocol.getCompletedCycles());
         }
+
+        var fBaseR = _fitBaseRmssd;
+        if (fBaseR != null) {
+            var br = _tracker.getStageRmssdMs(BreathProtocol.STAGE_BASELINE);
+            fBaseR.setData((br != null) ? br : 0.0);
+        }
+
+        var fRecR = _fitRecRmssd;
+        if (fRecR != null) {
+            var rr = _tracker.getStageRmssdMs(BreathProtocol.STAGE_RECOVERY);
+            fRecR.setData((rr != null) ? rr : 0.0);
+        }
+
+        var fBaseHr = _fitBaseHr;
+        if (fBaseHr != null) {
+            var bh = _tracker.getStageAvgHeartRate(BreathProtocol.STAGE_BASELINE);
+            fBaseHr.setData((bh != null) ? bh : 0);
+        }
+
+        var fRecHr = _fitRecHr;
+        if (fRecHr != null) {
+            var rh = _tracker.getStageAvgHeartRate(BreathProtocol.STAGE_RECOVERY);
+            fRecHr.setData((rh != null) ? rh : 0);
+        }
+    }
+
+    private function vibrateSoftStart() as Void {
+        var vibe = [new Attention.VibeProfile(35, 100)] as Array<Attention.VibeProfile>;
+        Attention.vibrate(vibe);
+    }
+
+    private function vibrateStageStartBreathing() as Void {
+        var vibe = [
+            new Attention.VibeProfile(60, 100),
+            new Attention.VibeProfile(0, 70),
+            new Attention.VibeProfile(75, 150)
+        ] as Array<Attention.VibeProfile>;
+        Attention.vibrate(vibe);
+    }
+
+    private function vibrateStageEnterRecovery() as Void {
+        var vibe = [
+            new Attention.VibeProfile(55, 120),
+            new Attention.VibeProfile(0, 80),
+            new Attention.VibeProfile(25, 180)
+        ] as Array<Attention.VibeProfile>;
+        Attention.vibrate(vibe);
     }
 
     private function vibrateForPhase(phaseType as Number) as Void {

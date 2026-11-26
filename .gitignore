@@ -3,4 +3,7 @@ developer_key.pem
 developer_key.der
 *.prg
 *.iq
+sessions/
+analysis_out/
+tools/garmin_pull_fit
 .DS_Store
