@@ -28,5 +28,23 @@
             precision="0"
             dataLabel="@Strings.FitCyclesLabel"
             unitLabel="@Strings.FitCyclesUnits" />
+        <fitField
+            id="4"
+            displayInChart="true"
+            sortOrder="4"
+            precision="1"
+            chartTitle="@Strings.FitLiveRmssdChart"
+            dataLabel="@Strings.FitLiveRmssdLabel"
+            unitLabel="@Strings.FitRmssdUnits"
+            fillColor="#00D4C8" />
+        <fitField
+            id="5"
+            displayInChart="true"
+            sortOrder="5"
+            precision="0"
+            chartTitle="@Strings.FitLiveStressChart"
+            dataLabel="@Strings.FitLiveStressLabel"
+            unitLabel="@Strings.FitLiveStressUnits"
+            fillColor="#FFB84D" />
     </fitContributions>
 </resources>

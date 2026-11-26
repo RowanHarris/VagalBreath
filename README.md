@@ -18,8 +18,8 @@ A standalone, scientifically backed vagal-tone & stress-reduction breathwork Wat
 ## Features
 - **Eyes-Closed Haptic Guidance:** Distinct tactile vibration signatures for `Inhale` (ascending pulse), `Top-Off` (crisp sharp double-tap), `Hold` (soft micro-tick), and `Exhale` (gentle descending wave).
 - **Smooth Bioluminescent Breathing Ring:** 10 Hz cosine-eased circular pacer (showing the 2-stage 78% → 100% surge during Cyclic Sigh's top-off inhale) + outer bezel session progress arc.
-- **Live Vagal Biofeedback:** Live **Heart Rate**, **HR Drop (`-6 bpm`)**, **Garmin Stress**, and real artifact-filtered **RMSSD HRV (`ms`)** computed directly from Venu 3's beat-to-beat R-R intervals (`SensorData.heartBeatIntervals`).
-- **Native Garmin Breathwork Recording:** Saves as `Activity.SPORT_TRAINING` / `Activity.SUB_SPORT_BREATHING` with custom FIT summary fields (`breath_protocol`, `hr_drop_bpm`, `vagal_rmssd`, `breath_cycles`) and a secondary *"Are you sure?"* Discard check.
+- **Live Vagal Biofeedback & Post-Session Graphs:** Live **Heart Rate**, **HR Drop (`-6 bpm`)**, and real artifact-filtered **RMSSD HRV (`ms`)** computed directly from Venu 3's beat-to-beat R-R intervals (`SensorData.heartBeatIntervals`), plus 4 swipeable post-session pages (**Overview Summary**, **Heart Rate Graph**, **0–100 Autonomic Stress Zone Graph**, and **Vagal RMSSD HRV Graph**).
+- **Native Garmin Breathwork Recording:** Saves as `Activity.SPORT_TRAINING` / `Activity.SUB_SPORT_BREATHING` with custom FIT session fields (`breath_protocol`, `hr_drop_bpm`, `vagal_rmssd`, `breath_cycles`), continuous chart fields (`live_rmssd`, `live_stress`), and a secondary *"Are you sure?"* Discard check.
 
 ## Build & Test
 ```bash

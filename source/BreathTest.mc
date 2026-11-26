@@ -151,6 +151,19 @@ class BreathTest {
         Test.assert(BreathView.formatRmssdLine(50.2).equals("HRV 50 ms"));
         Test.assert(BreathView.formatMinuteSecond(125.0).equals("02:05"));
 
+        // Autonomic Stress ln(RMSSD) mapping & history snapshot checks
+        var highStress = VagalMetricsTracker.computeStressFromRmssd(10.0);
+        var lowStress = VagalMetricsTracker.computeStressFromRmssd(85.0);
+        Test.assert(highStress > 80);
+        Test.assert(lowStress <= 25);
+
+        tracker.recordHistorySnapshot();
+        Test.assertEqual(1, tracker.getHrHistory().size());
+        Test.assertEqual(62, tracker.getHrHistory()[0]);
+        Test.assertEqual(1, tracker.getRmssdHistory().size());
+        Test.assertEqual(50, tracker.getRmssdHistory()[0]);
+        Test.assertEqual(1, tracker.getStressHistory().size());
+
         return true;
     }
 }

@@ -15,11 +15,14 @@ import Toybox.WatchUi;
 //! Main entry point and session controller for VagalBreath (Garmin Venu 3).
 //!
 //! Features:
-//!   - 5 peer-reviewed vagal-tone / stress-reduction breathing protocols
+//!   - 5 peer-reviewed vagal-tone / stress-reduction breathing protocols with per-stage customization
 //!   - Distinct eyes-closed tactile haptic signatures per breath phase
-//!   - Live HR, HR drop (Start -> Current), Garmin Stress, and real beat-to-beat RMSSD HRV
+//!   - Live HR, HR drop, Garmin Stress, and real beat-to-beat RMSSD HRV + 2s history buffers
+//!   - 4 scrollable post-session pages (Summary, HR Graph, Autonomic Stress Graph, Vagal HRV Graph)
 //!   - Native Garmin Breathwork FIT recording (SPORT_TRAINING / SUB_SPORT_BREATHING)
 class BreathApp extends Application.AppBase {
+
+    public static const SUMMARY_PAGE_COUNT as Number = 4;
 
     private static const STORAGE_KEY_PROTOCOL as String = "vb_protocol_id";
     private static const STORAGE_KEY_DURATION as String = "vb_duration_min";
@@ -29,6 +32,8 @@ class BreathApp extends Application.AppBase {
     private static const FIT_FIELD_HR_DROP_ID as Number = 1;
     private static const FIT_FIELD_RMSSD_ID as Number = 2;
     private static const FIT_FIELD_CYCLES_ID as Number = 3;
+    private static const FIT_FIELD_LIVE_RMSSD_ID as Number = 4;
+    private static const FIT_FIELD_LIVE_STRESS_ID as Number = 5;
 
     // 100ms animation tick (10 Hz) for smooth breathing circle pacing on AMOLED
     private static const TICK_INTERVAL_MS as Number = 100;
@@ -41,11 +46,15 @@ class BreathApp extends Application.AppBase {
     private var _fitHrDrop as FitContributor.Field?;
     private var _fitRmssd as FitContributor.Field?;
     private var _fitCycles as FitContributor.Field?;
+    private var _fitLiveRmssd as FitContributor.Field?;
+    private var _fitLiveStress as FitContributor.Field?;
 
     private var _tickTimer as Timer.Timer?;
     private var _lastTickMs as Number?;
     private var _sensorPollCounter as Number;
+    private var _historyPollCounter as Number;
     private var _liveReadyHr as Number?;
+    private var _summaryPage as Number;
 
     public function initialize() {
         AppBase.initialize();
@@ -71,18 +80,21 @@ class BreathApp extends Application.AppBase {
         _fitHrDrop = null;
         _fitRmssd = null;
         _fitCycles = null;
+        _fitLiveRmssd = null;
+        _fitLiveStress = null;
 
         _tickTimer = null;
         _lastTickMs = null;
         _sensorPollCounter = 0;
+        _historyPollCounter = 0;
         _liveReadyHr = null;
+        _summaryPage = 0;
     }
 
     public function onStart(state as Dictionary?) as Void {
         Sensor.setEnabledSensors([Sensor.SENSOR_HEARTRATE] as Array<Sensor.SensorType>);
         Sensor.enableSensorEvents(method(:onSensorEvent));
 
-        // Register 1 Hz beat-to-beat R-R interval stream for live RMSSD vagal HRV
         try {
             Sensor.registerSensorDataListener(
                 method(:onSensorData),
@@ -92,7 +104,6 @@ class BreathApp extends Application.AppBase {
                 }
             );
         } catch (ex) {
-            // Gracefully degrade if HBI listener is unavailable in simulator
         }
 
         var tickTimer = new Timer.Timer();
@@ -153,11 +164,19 @@ class BreathApp extends Application.AppBase {
     public function onTickTimer() as Void {
         var state = _protocol.getState();
 
-        // Sample HR & Stress roughly once per second (every 10 ticks)
+        // Sample HR, Stress, and per-second FIT chart streams once per second (every 10 ticks)
         _sensorPollCounter += 1;
         if (_sensorPollCounter >= 10) {
             _sensorPollCounter = 0;
             pollVitals(state == BreathProtocol.STATE_ACTIVE);
+            if (state == BreathProtocol.STATE_ACTIVE) {
+                syncRecordFitFields();
+                _historyPollCounter += 1;
+                if (_historyPollCounter >= 2) {
+                    _historyPollCounter = 0;
+                    _tracker.recordHistorySnapshot();
+                }
+            }
         }
 
         if (state != BreathProtocol.STATE_ACTIVE) {
@@ -187,7 +206,7 @@ class BreathApp extends Application.AppBase {
     }
 
     // -------------------------------------------------------------------------
-    // Settings & Session Lifecycle Controls
+    // Settings, Summary Navigation & Session Lifecycle
     // -------------------------------------------------------------------------
 
     public function selectProtocol(protocolId as Number) as Void {
@@ -234,6 +253,20 @@ class BreathApp extends Application.AppBase {
         WatchUi.requestUpdate();
     }
 
+    public function nextSummaryPage() as Void {
+        _summaryPage = (_summaryPage + 1) % SUMMARY_PAGE_COUNT;
+        WatchUi.requestUpdate();
+    }
+
+    public function prevSummaryPage() as Void {
+        _summaryPage = (_summaryPage + SUMMARY_PAGE_COUNT - 1) % SUMMARY_PAGE_COUNT;
+        WatchUi.requestUpdate();
+    }
+
+    public function getSummaryPage() as Number {
+        return _summaryPage;
+    }
+
     public function startSession() as Void {
         if (_protocol.getState() != BreathProtocol.STATE_READY) {
             return;
@@ -241,9 +274,11 @@ class BreathApp extends Application.AppBase {
 
         _tracker.reset();
         _sensorPollCounter = 0;
+        _historyPollCounter = 0;
+        _summaryPage = 0;
 
-        // Seed baseline HR & Stress immediately if already available
         pollVitals(true);
+        _tracker.recordHistorySnapshot();
 
         var session = ActivityRecording.createSession({
             :name => BreathProtocol.getProtocolShortName(_protocol.getProtocolId()),
@@ -291,6 +326,26 @@ class BreathApp extends Application.AppBase {
             }
         );
 
+        _fitLiveRmssd = session.createField(
+            "live_rmssd",
+            FIT_FIELD_LIVE_RMSSD_ID,
+            FitContributor.DATA_TYPE_FLOAT,
+            {
+                :mesgType => FitContributor.MESG_TYPE_RECORD,
+                :units => "ms"
+            }
+        );
+
+        _fitLiveStress = session.createField(
+            "live_stress",
+            FIT_FIELD_LIVE_STRESS_ID,
+            FitContributor.DATA_TYPE_UINT8,
+            {
+                :mesgType => FitContributor.MESG_TYPE_RECORD,
+                :units => "pts"
+            }
+        );
+
         _session = session;
         session.start();
 
@@ -298,7 +353,6 @@ class BreathApp extends Application.AppBase {
         _lastTickMs = System.getTimer();
         syncFitFields();
 
-        // Cue the opening Inhale phase immediately so user can close eyes right away
         vibrateForPhase(_protocol.getCurrentPhaseType());
         WatchUi.requestUpdate();
     }
@@ -329,6 +383,13 @@ class BreathApp extends Application.AppBase {
         _protocol.resume();
         _lastTickMs = System.getTimer();
         vibrateForPhase(_protocol.getCurrentPhaseType());
+        WatchUi.requestUpdate();
+    }
+
+    //! End early from the Pause menu to inspect all post-session graphs before Saving/Discarding.
+    public function finishToReview() as Void {
+        _protocol.completeEarly();
+        finalizeCompletedSession();
         WatchUi.requestUpdate();
     }
 
@@ -389,7 +450,9 @@ class BreathApp extends Application.AppBase {
 
     private function finalizeCompletedSession() as Void {
         _lastTickMs = null;
+        _summaryPage = 0;
         pollVitals(true);
+        _tracker.recordHistorySnapshot();
         syncFitFields();
 
         var session = _session;
@@ -428,6 +491,20 @@ class BreathApp extends Application.AppBase {
         }
     }
 
+    private function syncRecordFitFields() as Void {
+        var rmssd = _tracker.getRollingRmssdMs();
+        if (rmssd != null) {
+            var fLiveRmssd = _fitLiveRmssd;
+            if (fLiveRmssd != null) {
+                fLiveRmssd.setData(rmssd);
+            }
+            var fLiveStress = _fitLiveStress;
+            if (fLiveStress != null) {
+                fLiveStress.setData(VagalMetricsTracker.computeStressFromRmssd(rmssd));
+            }
+        }
+    }
+
     private function syncFitFields() as Void {
         var fProto = _fitProtocol;
         if (fProto != null) {
@@ -452,27 +529,22 @@ class BreathApp extends Application.AppBase {
         }
     }
 
-    //! Distinct eyes-closed vibration patterns for every breath phase.
     private function vibrateForPhase(phaseType as Number) as Void {
         var vibe = [] as Array<Attention.VibeProfile>;
         if (phaseType == BreathProtocol.PHASE_INHALE) {
-            // Smooth ascending pulse: begin deep nasal inhale
             vibe = [
                 new Attention.VibeProfile(30, 80),
                 new Attention.VibeProfile(60, 120)
             ] as Array<Attention.VibeProfile>;
         } else if (phaseType == BreathProtocol.PHASE_INHALE_TOP_OFF) {
-            // Unmistakable crisp sharp double-tap: Huberman second nasal top-off sip!
             vibe = [
                 new Attention.VibeProfile(100, 50),
                 new Attention.VibeProfile(0, 55),
                 new Attention.VibeProfile(100, 50)
             ] as Array<Attention.VibeProfile>;
         } else if (phaseType == BreathProtocol.PHASE_HOLD_IN || phaseType == BreathProtocol.PHASE_HOLD_OUT) {
-            // Quiet subtle micro-tick: begin hold calmly
             vibe = [new Attention.VibeProfile(22, 45)] as Array<Attention.VibeProfile>;
         } else {
-            // Gentle descending wave: slow extended vagal exhale
             vibe = [
                 new Attention.VibeProfile(55, 110),
                 new Attention.VibeProfile(22, 190)

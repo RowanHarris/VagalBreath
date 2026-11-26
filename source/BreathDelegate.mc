@@ -92,16 +92,26 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
     }
 
     public function onNextPage() as Boolean {
-        if (_app.getProtocol().getState() == BreathProtocol.STATE_READY) {
+        var state = _app.getProtocol().getState();
+        if (state == BreathProtocol.STATE_READY) {
             pushSetupMenu();
+            return true;
+        }
+        if (state == BreathProtocol.STATE_COMPLETE) {
+            _app.nextSummaryPage();
             return true;
         }
         return true;
     }
 
     public function onPreviousPage() as Boolean {
-        if (_app.getProtocol().getState() == BreathProtocol.STATE_READY) {
+        var state = _app.getProtocol().getState();
+        if (state == BreathProtocol.STATE_READY) {
             pushSetupMenu();
+            return true;
+        }
+        if (state == BreathProtocol.STATE_COMPLETE) {
+            _app.prevSummaryPage();
             return true;
         }
         return true;
@@ -150,11 +160,13 @@ class BreathDelegate extends WatchUi.BehaviorDelegate {
     private function pushPausedMenu() as Void {
         var title = WatchUi.loadResource(Rez.Strings.MenuPausedTitle) as String;
         var resumeLabel = WatchUi.loadResource(Rez.Strings.MenuResume) as String;
+        var reviewLabel = WatchUi.loadResource(Rez.Strings.MenuReview) as String;
         var saveLabel = WatchUi.loadResource(Rez.Strings.MenuSave) as String;
         var discardLabel = WatchUi.loadResource(Rez.Strings.MenuDiscard) as String;
 
         var menu = new WatchUi.Menu2({ :title => title });
         menu.addItem(new WatchUi.MenuItem(resumeLabel, null, :resume, null));
+        menu.addItem(new WatchUi.MenuItem(reviewLabel, null, :review, null));
         menu.addItem(new WatchUi.MenuItem(saveLabel, null, :save, null));
         menu.addItem(new WatchUi.MenuItem(discardLabel, null, :discard, null));
 
@@ -471,6 +483,9 @@ class BreathSessionMenuDelegate extends WatchUi.Menu2InputDelegate {
         if (id == :resume) {
             WatchUi.popView(WatchUi.SLIDE_DOWN);
             _app.resumeSession();
+        } else if (id == :review) {
+            WatchUi.popView(WatchUi.SLIDE_DOWN);
+            _app.finishToReview();
         } else if (id == :save) {
             WatchUi.popView(WatchUi.SLIDE_IMMEDIATE);
             _app.finishAndSave();

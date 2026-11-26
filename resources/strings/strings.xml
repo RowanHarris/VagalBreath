@@ -39,6 +39,7 @@
     <string id="MenuPausedTitle">Session Paused</string>
     <string id="MenuCompleteTitle">Session Complete</string>
     <string id="MenuResume">Resume</string>
+    <string id="MenuReview">Finish &amp; Graphs</string>
     <string id="MenuSave">Save</string>
     <string id="MenuDiscard">Discard</string>
     <string id="ConfirmDiscardPrompt">Discard session?\nAre you sure?</string>
@@ -52,4 +53,9 @@
     <string id="FitRmssdUnits">ms</string>
     <string id="FitCyclesLabel">Breath Cycles</string>
     <string id="FitCyclesUnits">cycles</string>
+    <string id="FitLiveRmssdChart">Vagal HRV (RMSSD)</string>
+    <string id="FitLiveRmssdLabel">Live RMSSD</string>
+    <string id="FitLiveStressChart">Autonomic Stress</string>
+    <string id="FitLiveStressLabel">Stress Index</string>
+    <string id="FitLiveStressUnits">pts</string>
 </resources>

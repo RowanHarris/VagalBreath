@@ -1,13 +1,15 @@
 import Toybox.Lang;
 import Toybox.Math;
 
-//! Real-time autonomic & vagal biofeedback tracker.
+//! Real-time autonomic & vagal biofeedback tracker with full-session time-series
+//! history for post-session Heart Rate, Autonomic Stress (0-100), and RMSSD HRV graphs.
 //!
 //! Computes:
-//!   - Baseline Start HR (averaged over initial 5 valid samples) and live HR Change (bpm)
+//!   - Baseline Start HR (averaged over initial 5 valid samples), Min/Avg/Max HR, and live HR delta
 //!   - Rolling & Session-Mean RMSSD HRV (ms) from beat-to-beat R-R intervals
 //!     (Sensor.HeartRateData.heartBeatIntervals) with Malik physiological artifact filtering
-//!   - Start & End Garmin Stress Score (1..100) when available
+//!   - Continuous HRV-derived Autonomic Stress Index (0-100) via ln(RMSSD) mapping
+//!   - Downsampled/capped time-series buffers (every 2s, up to 320 points = >10 min)
 class VagalMetricsTracker {
 
     // Physiological R-R interval bounds (ms): 300ms (200 bpm) .. 2000ms (30 bpm)
@@ -22,6 +24,9 @@ class VagalMetricsTracker {
     public static const ROLLING_DIFF_WINDOW as Number = 30;
     public static const MIN_DIFFS_FOR_RMSSD as Number = 5;
 
+    // Max time-series points stored (1 point every 2s -> 320 pts covers > 10.6 min)
+    public static const MAX_HISTORY_POINTS as Number = 320;
+
     // Baseline Start HR averaging sample count
     private static const BASELINE_HR_SAMPLES as Number = 5;
 
@@ -30,6 +35,7 @@ class VagalMetricsTracker {
     private var _startHrAvg as Float?;
     private var _currentHr as Number?;
     private var _minHr as Number?;
+    private var _maxHr as Number?;
     private var _hrSum as Number;
     private var _hrCount as Number;
 
@@ -40,6 +46,13 @@ class VagalMetricsTracker {
 
     private var _startStress as Number?;
     private var _currentStress as Number?;
+    private var _startAutoStress as Number?;
+    private var _currentAutoStress as Number?;
+
+    // Post-session graph time-series buffers (-1 means metric not yet available at that sample)
+    private var _hrHistory as Array<Number>;
+    private var _stressHistory as Array<Number>;
+    private var _rmssdHistory as Array<Number>;
 
     public function initialize() {
         _startHrSum = 0;
@@ -47,6 +60,7 @@ class VagalMetricsTracker {
         _startHrAvg = null;
         _currentHr = null;
         _minHr = null;
+        _maxHr = null;
         _hrSum = 0;
         _hrCount = 0;
 
@@ -57,6 +71,12 @@ class VagalMetricsTracker {
 
         _startStress = null;
         _currentStress = null;
+        _startAutoStress = null;
+        _currentAutoStress = null;
+
+        _hrHistory = [] as Array<Number>;
+        _stressHistory = [] as Array<Number>;
+        _rmssdHistory = [] as Array<Number>;
     }
 
     public function reset() as Void {
@@ -65,6 +85,7 @@ class VagalMetricsTracker {
         _startHrAvg = null;
         _currentHr = null;
         _minHr = null;
+        _maxHr = null;
         _hrSum = 0;
         _hrCount = 0;
 
@@ -75,10 +96,38 @@ class VagalMetricsTracker {
 
         _startStress = null;
         _currentStress = null;
+        _startAutoStress = null;
+        _currentAutoStress = null;
+
+        _hrHistory = [] as Array<Number>;
+        _stressHistory = [] as Array<Number>;
+        _rmssdHistory = [] as Array<Number>;
     }
 
     // -------------------------------------------------------------------------
-    // Sensor Ingestion
+    // Pure Physiological Conversion Helpers
+    // -------------------------------------------------------------------------
+
+    //! Maps vagal RMSSD (ms) onto a Garmin-style 1..100 Autonomic Stress Index using ln(RMSSD).
+    //! Higher RMSSD (stronger vagal tone) -> lower Stress (<25 Rest, 26-50 Low, 51-75 Med, 76+ High).
+    public static function computeStressFromRmssd(rmssdMs as Float) as Number {
+        var clamped = rmssdMs;
+        if (clamped < 5.0) {
+            clamped = 5.0;
+        }
+        var lnVal = Math.ln(clamped).toFloat();
+        var raw = 100.0 - ((lnVal - 2.08) * (95.0 / 2.86));
+        var score = Math.round(raw).toNumber();
+        if (score < 1) {
+            score = 1;
+        } else if (score > 100) {
+            score = 100;
+        }
+        return score;
+    }
+
+    // -------------------------------------------------------------------------
+    // Sensor Ingestion & Time-Series Snapshotting
     // -------------------------------------------------------------------------
 
     //! Ingest a live heart rate sample (bpm) during an active session.
@@ -93,6 +142,10 @@ class VagalMetricsTracker {
         var minHr = _minHr;
         if (minHr == null || hr < minHr) {
             _minHr = hr;
+        }
+        var maxHr = _maxHr;
+        if (maxHr == null || hr > maxHr) {
+            _maxHr = hr;
         }
 
         if (_startHrCount < BASELINE_HR_SAMPLES) {
@@ -111,12 +164,12 @@ class VagalMetricsTracker {
         for (var i = 0; i < count; i++) {
             recordSingleRrInterval(intervals[i]);
         }
+        updateAutonomicStress();
     }
 
     //! Validate and ingest one R-R interval (ms) with Malik physiological artifact filtering.
     public function recordSingleRrInterval(rrMs as Number) as Boolean {
         if (rrMs < MIN_VALID_RR_MS || rrMs > MAX_VALID_RR_MS) {
-            // Break pair continuity on out-of-range artifact
             _lastValidRrMs = null;
             return false;
         }
@@ -132,7 +185,6 @@ class VagalMetricsTracker {
         var ratio = absDiff.toFloat() / prevRr.toFloat();
 
         if (absDiff > MAX_RR_JUMP_MS || ratio > MAX_RR_JUMP_RATIO) {
-            // Artifact spike: re-anchor without polluting RMSSD squared differences
             _lastValidRrMs = rrMs;
             return false;
         }
@@ -146,7 +198,7 @@ class VagalMetricsTracker {
         return true;
     }
 
-    //! Record Garmin stress score (1..100) from ActivityMonitor.getInfo().stressScore.
+    //! Record Garmin all-day stress score (1..100) when available.
     public function recordStressScore(stress as Number?) as Void {
         if (stress == null || stress < 1 || stress > 100) {
             return;
@@ -155,6 +207,44 @@ class VagalMetricsTracker {
             _startStress = stress;
         }
         _currentStress = stress;
+    }
+
+    //! Append one synchronized snapshot of HR, Stress (0-100), and rolling RMSSD (ms)
+    //! for the post-session graphs. Call every ~2 seconds while session is active.
+    public function recordHistorySnapshot() as Void {
+        if (_hrHistory.size() >= MAX_HISTORY_POINTS) {
+            return;
+        }
+
+        var hrVal = _currentHr;
+        _hrHistory.add((hrVal != null) ? hrVal : -1);
+
+        var rmssd = getRollingRmssdMs();
+        if (rmssd != null) {
+            var rmssdInt = Math.round(rmssd).toNumber();
+            _rmssdHistory.add(rmssdInt);
+            var autoStress = VagalMetricsTracker.computeStressFromRmssd(rmssd);
+            _stressHistory.add(autoStress);
+            if (_startAutoStress == null) {
+                _startAutoStress = autoStress;
+            }
+            _currentAutoStress = autoStress;
+        } else {
+            _rmssdHistory.add(-1);
+            var fallbackStress = _currentStress;
+            _stressHistory.add((fallbackStress != null) ? fallbackStress : -1);
+        }
+    }
+
+    private function updateAutonomicStress() as Void {
+        var rmssd = getRollingRmssdMs();
+        if (rmssd != null) {
+            var autoStress = VagalMetricsTracker.computeStressFromRmssd(rmssd);
+            if (_startAutoStress == null) {
+                _startAutoStress = autoStress;
+            }
+            _currentAutoStress = autoStress;
+        }
     }
 
     private function pushRollingSqDiff(sqDiff as Float) as Void {
@@ -190,6 +280,17 @@ class VagalMetricsTracker {
         return _minHr;
     }
 
+    public function getMaxHeartRate() as Number? {
+        return _maxHr;
+    }
+
+    public function getAvgHeartRateRounded() as Number? {
+        if (_hrCount <= 0) {
+            return null;
+        }
+        return Math.round(_hrSum.toFloat() / _hrCount.toFloat()).toNumber();
+    }
+
     //! Live heart rate change in bpm (currentHR - startHR). Negative indicates HR dropped.
     public function getHeartRateDelta() as Number? {
         var cur = _currentHr;
@@ -201,7 +302,6 @@ class VagalMetricsTracker {
     }
 
     //! Rolling RMSSD HRV (ms) over recent ~30s of artifact-filtered beat-to-beat intervals.
-    //! Returns null until at least MIN_DIFFS_FOR_RMSSD (5) valid successive pairs exist.
     public function getRollingRmssdMs() as Float? {
         var n = _rollingSqDiffs.size();
         if (n < MIN_DIFFS_FOR_RMSSD) {
@@ -226,11 +326,44 @@ class VagalMetricsTracker {
         return _sessionSqDiffCount;
     }
 
+    //! Returns HRV-derived autonomic stress (1-100), falling back to Garmin stressScore if needed.
+    public function getStartEffectiveStress() as Number? {
+        var autoStart = _startAutoStress;
+        if (autoStart != null) {
+            return autoStart;
+        }
+        return _startStress;
+    }
+
+    public function getCurrentEffectiveStress() as Number? {
+        var autoCur = _currentAutoStress;
+        if (autoCur != null) {
+            return autoCur;
+        }
+        return _currentStress;
+    }
+
     public function getStartStress() as Number? {
         return _startStress;
     }
 
     public function getCurrentStress() as Number? {
         return _currentStress;
+    }
+
+    // -------------------------------------------------------------------------
+    // Time-Series History Accessors (For Post-Session Graphs)
+    // -------------------------------------------------------------------------
+
+    public function getHrHistory() as Array<Number> {
+        return _hrHistory;
+    }
+
+    public function getStressHistory() as Array<Number> {
+        return _stressHistory;
+    }
+
+    public function getRmssdHistory() as Array<Number> {
+        return _rmssdHistory;
     }
 }
